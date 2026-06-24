@@ -3,7 +3,7 @@ import { BooleanInput, Button, ColorPicker, Container, Element, Label, SelectInp
 import { Pose } from '../camera-poses';
 import { localize } from './localization';
 import { Events } from '../events';
-import { ExportType, SceneExportOptions } from '../file-handler';
+import { ExportType, SogExportSettings, SceneExportOptions } from '../file-handler';
 import { AnimTrack, ExperienceSettings, defaultPostEffectSettings } from '../splat-serialize';
 import sceneExport from './svg/export.svg';
 
@@ -232,6 +232,91 @@ class ExportPopup extends Container {
         iterationsRow.append(iterationsLabel);
         iterationsRow.append(iterationsSlider);
 
+        // min opacity
+
+        const minOpacityRow = new Container({
+            class: 'row'
+        });
+
+        const minOpacityLabel = new Label({
+            class: 'label',
+            text: localize('popup.export.min-opacity')
+        });
+
+        const minOpacitySlider = new SliderInput({
+            class: 'slider',
+            min: 0,
+            max: 1,
+            precision: 3,
+            value: 1 / 255
+        });
+
+        minOpacityRow.append(minOpacityLabel);
+        minOpacityRow.append(minOpacitySlider);
+
+        // remove invalid
+
+        const removeInvalidRow = new Container({
+            class: 'row'
+        });
+
+        const removeInvalidLabel = new Label({
+            class: 'label',
+            text: localize('popup.export.remove-invalid')
+        });
+
+        const removeInvalidToggle = new BooleanInput({
+            class: 'boolean',
+            type: 'toggle',
+            value: true
+        });
+
+        removeInvalidRow.append(removeInvalidLabel);
+        removeInvalidRow.append(removeInvalidToggle);
+
+        // sog format (bundled / unbundled)
+
+        const sogFormatRow = new Container({
+            class: 'row'
+        });
+
+        const sogFormatLabel = new Label({
+            class: 'label',
+            text: localize('popup.export.sog-format')
+        });
+
+        const sogFormatSelect = new SelectInput({
+            class: 'select',
+            defaultValue: 'unbundled',
+            options: [
+                { v: 'bundled', t: localize('popup.export.sog-format.bundled') },
+                { v: 'unbundled', t: localize('popup.export.sog-format.unbundled') }
+            ]
+        });
+
+        sogFormatRow.append(sogFormatLabel);
+        sogFormatRow.append(sogFormatSelect);
+
+        // include settings
+
+        const includeSettingsRow = new Container({
+            class: 'row'
+        });
+
+        const includeSettingsLabel = new Label({
+            class: 'label',
+            text: localize('popup.export.include-settings')
+        });
+
+        const includeSettingsToggle = new BooleanInput({
+            class: 'boolean',
+            type: 'toggle',
+            value: false
+        });
+
+        includeSettingsRow.append(includeSettingsLabel);
+        includeSettingsRow.append(includeSettingsToggle);
+
         // filename
 
         const filenameRow = new Container({
@@ -260,6 +345,10 @@ class ExportPopup extends Container {
         content.append(compressRow);
         content.append(bandsRow);
         content.append(iterationsRow);
+        content.append(minOpacityRow);
+        content.append(removeInvalidRow);
+        content.append(sogFormatRow);
+        content.append(includeSettingsRow);
         content.append(filenameRow);
 
         // footer
@@ -323,15 +412,24 @@ class ExportPopup extends Container {
             loopSelect.enabled = value;
         });
 
+        includeSettingsToggle.on('change', (value: boolean) => {
+            colorRow.hidden = !value;
+            fovRow.hidden = !value;
+            animationRow.hidden = !value;
+            loopRow.hidden = !value || !animationToggle.value;
+            loopSelect.enabled = value && animationToggle.value;
+        });
+
         const reset = (exportType: ExportType, splatNames: string[], hasPoses: boolean) => {
             const allRows = [
-                viewerTypeRow, animationRow, loopRow, colorRow, fovRow, compressRow, bandsRow, iterationsRow, filenameRow
+                viewerTypeRow, animationRow, loopRow, colorRow, fovRow, compressRow, bandsRow, iterationsRow, minOpacityRow, removeInvalidRow, sogFormatRow, includeSettingsRow, filenameRow
             ];
 
             const activeRows = {
                 ply: [compressRow, bandsRow, filenameRow],
                 splat: [filenameRow],
                 sog: [bandsRow, iterationsRow, filenameRow],
+                'sog-package': [bandsRow, iterationsRow, minOpacityRow, removeInvalidRow, sogFormatRow, includeSettingsRow, colorRow, fovRow, animationRow, loopRow, filenameRow],
                 viewer: [viewerTypeRow, animationRow, loopRow, colorRow, fovRow, bandsRow, filenameRow]
             }[exportType];
 
@@ -347,6 +445,12 @@ class ExportPopup extends Container {
             // sog
             iterationsSlider.value = 10;
 
+            // sog-package
+            minOpacitySlider.value = 1 / 255;
+            removeInvalidToggle.value = true;
+            sogFormatSelect.value = 'unbundled';
+            includeSettingsToggle.value = false;
+
             // filename
             filenameEntry.value = splatNames[0];
             switch (exportType) {
@@ -359,10 +463,19 @@ class ExportPopup extends Container {
                 case 'sog':
                     updateExtension('.sog');
                     break;
+                case 'sog-package':
+                    updateExtension('.zip');
+                    break;
                 case 'viewer':
                     updateExtension(viewerTypeSelect.value === 'html' ? '.html' : '.zip');
                     break;
             }
+
+            // sog-package: settings rows visibility
+            colorRow.hidden = true;
+            fovRow.hidden = true;
+            animationRow.hidden = true;
+            loopRow.hidden = true;
 
             // viewer
             const bgClr = events.invoke('bgClr');
@@ -425,7 +538,8 @@ class ExportPopup extends Container {
                 };
             };
 
-            const assembleViewerOptions = () : SceneExportOptions => {
+            // Shared helper to build ExperienceSettings for viewer and sog-package exports
+            const assembleExperienceSettings = (includeAnimation: boolean): ExperienceSettings => {
                 const fov = fovSlider.value;
 
                 // use current viewport as start pose
@@ -440,7 +554,6 @@ class ExportPopup extends Container {
                     }
                 }] : [];
 
-                const includeAnimation = animationToggle.value;
                 const animTracks: AnimTrack[] = [];
 
                 if (includeAnimation && orderedPoses.length > 0) {
@@ -472,7 +585,7 @@ class ExportPopup extends Container {
 
                 const bgColor = colorPicker.value.slice(0, 3) as [number, number, number];
 
-                const experienceSettings: ExperienceSettings = {
+                return {
                     version: 2,
                     tonemapping: 'none',
                     highPrecisionRendering: false,
@@ -483,7 +596,9 @@ class ExportPopup extends Container {
                     annotations: [],
                     startMode: includeAnimation ? 'animTrack' : 'default'
                 };
+            };
 
+            const assembleViewerOptions = () : SceneExportOptions => {
                 return {
                     filename: filenameEntry.value,
                     splatIdx: 'all',
@@ -492,9 +607,34 @@ class ExportPopup extends Container {
                     },
                     viewerExportSettings: {
                         type: viewerTypeSelect.value,
-                        experienceSettings
+                        experienceSettings: assembleExperienceSettings(animationToggle.value)
                     }
                 };
+            };
+
+            const assembleSogPackageOptions = () : SceneExportOptions => {
+                const includeSettings = includeSettingsToggle.value;
+
+                const result: SceneExportOptions = {
+                    filename: filenameEntry.value,
+                    splatIdx: 'all',
+                    serializeSettings: {
+                        maxSHBands: bandsSlider.value,
+                        minOpacity: minOpacitySlider.value,
+                        removeInvalid: removeInvalidToggle.value
+                    },
+                    sogExportSettings: {
+                        iterations: iterationsSlider.value,
+                        sogFormat: sogFormatSelect.value as 'bundled' | 'unbundled',
+                        includeSettings
+                    }
+                };
+
+                if (includeSettings) {
+                    result.sogExportSettings!.experienceSettings = assembleExperienceSettings(animationToggle.value);
+                }
+
+                return result;
             };
 
             return new Promise<null | SceneExportOptions>((resolve) => {
@@ -512,6 +652,9 @@ class ExportPopup extends Container {
                             break;
                         case 'sog':
                             resolve(assembleSogOptions());
+                            break;
+                        case 'sog-package':
+                            resolve(assembleSogPackageOptions());
                             break;
                         case 'viewer':
                             resolve(assembleViewerOptions());

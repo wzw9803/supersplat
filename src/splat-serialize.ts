@@ -1328,11 +1328,14 @@ const serializeViewer = async (splats: Splat[], serializeSettings: SerializeSett
 
 type SogSettings = SerializeSettings & {
     iterations: number;
+    sogFormat?: 'bundled' | 'unbundled';
+    includeSettings?: boolean;
+    experienceSettings?: ExperienceSettings;
     events?: Events;
 };
 
 const serializeSog = async (splats: Splat[], settings: SogSettings, fs: FileSystem): Promise<void> => {
-    const { iterations = 10, events } = settings;
+    const { iterations = 10, sogFormat = 'unbundled', includeSettings = false, experienceSettings, events } = settings;
 
     splatTransformLogger.setRenderer(createProgressRenderer('Exporting SOG', events));
 
@@ -1345,13 +1348,50 @@ const serializeSog = async (splats: Splat[], settings: SogSettings, fs: FileSyst
     // renderer. That fires `progressEnd` and dismisses the dialog before
     // any error popup is shown.
     try {
-        await writeSogInternal({
-            filename: 'output.sog',
-            dataTable,
-            bundle: true,
-            iterations,
-            createDevice: createGpuDevice
-        }, fs);
+        if (!includeSettings) {
+            // Mode A: single .sog bundle file (existing behavior)
+            await writeSogInternal({
+                filename: 'output.sog',
+                dataTable,
+                bundle: true,
+                iterations,
+                createDevice: createGpuDevice
+            }, fs);
+        } else {
+            // Mode B: SOG data + optional settings.json packed into a ZIP
+            const memFs = new MemoryFileSystem();
+            const bundle = sogFormat === 'bundled';
+            const sogFilename = bundle ? 'output.sog' : 'meta.json';
+
+            await writeSogInternal({
+                filename: sogFilename,
+                dataTable,
+                bundle,
+                iterations,
+                createDevice: createGpuDevice
+            }, memFs);
+
+            // Write settings.json into the memory filesystem
+            if (experienceSettings) {
+                const settingsJson = JSON.stringify(experienceSettings, null, 2);
+                const settingsWriter = await memFs.createWriter('settings.json');
+                await settingsWriter.write(new TextEncoder().encode(settingsJson));
+                await settingsWriter.close();
+            }
+
+            // Pack all files into a ZIP (same pattern as serializeViewer ZIP mode)
+            const zipWriter = await fs.createWriter('output.zip');
+            const zipFs = new ZipFileSystem(zipWriter);
+            try {
+                for (const [fname, data] of memFs.results.entries()) {
+                    const writer = await zipFs.createWriter(fname);
+                    await writer.write(data);
+                    await writer.close();
+                }
+            } finally {
+                await zipFs.close();
+            }
+        }
     } catch (err) {
         splatTransformLogger.unwindAll(true);
         throw err;
