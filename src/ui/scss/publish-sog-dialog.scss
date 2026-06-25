@@ -127,13 +127,16 @@
     }
 
     // ---- Result page ----
+    // Use :not(.pcui-hidden) to avoid overriding PCUI's .pcui-hidden { display: none }
     .result-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 12px;
-        padding: 16px 0;
-        text-align: center;
+        &:not(.pcui-hidden) {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 0;
+            text-align: center;
+        }
     }
 
     .result-label {

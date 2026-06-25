@@ -160,11 +160,9 @@ class PublishSogDialog extends Container {
         phaseList.append(this._completeRow);
 
         this._contentPhases.append(phaseList);
-        dialog.append(this._contentPhases);
 
-        // Result info — direct child of dialog (not inside _contentPhases)
-        // so the hidden toggle works independently of _contentPhases visibility.
-        this._resultInfo = new Container({ class: 'result-container', hidden: true });
+        // Result info — rendered below the phase checklist inside _contentPhases.
+        this._resultInfo = new Container({ class: 'result-container' });
         this._resultLabel = new Label({ class: 'result-label', text: localize('popup.publish-sog.success') });
         const linkRow = new Container({ class: 'link-row' });
         const linkLabelTitle = new Label({ class: 'label', text: localize('popup.publish-sog.share-link') });
@@ -173,7 +171,8 @@ class PublishSogDialog extends Container {
         linkRow.append(this._linkInput);
         this._resultInfo.append(this._resultLabel);
         this._resultInfo.append(linkRow);
-        dialog.append(this._resultInfo);
+        this._contentPhases.append(this._resultInfo);
+        dialog.append(this._contentPhases);
 
         // ---- Footer ----
         const footer = new Container({ id: 'footer' });
@@ -326,6 +325,7 @@ class PublishSogDialog extends Container {
             this._completeStatus.text = localize('popup.publish-sog.status-waiting');
             this._fileListContainer.clear();
             this._fileListContainer.hidden = true;
+            this._resultInfo.hidden = true;
             fileListExpanded = false;
             this._toggleButton.text = '▶';
 
