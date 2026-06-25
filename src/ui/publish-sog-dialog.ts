@@ -1,41 +1,78 @@
-import { Button, Container, Label, TextAreaInput, TextInput } from '@playcanvas/pcui';
+import { Button, Container, Label, Progress, Spinner, TextAreaInput, TextInput } from '@playcanvas/pcui';
 import { Events } from '../events';
 import { localize } from './localization';
 import { SogSettings } from '../splat-serialize';
-import { uploadSogPackage, UploadFileState, UploadProgress } from '../sog-upload';
+import { uploadSogPackage, PublishProgress, PublishResult, UploadFileState } from '../sog-upload';
 
-type PublishResult = {
+type DialogPublishResult = {
     shareId: string;
-    previewUrl: string;
+    shareUrl: string;
 };
 
-enum DialogState {
+enum PublishPhase {
     INPUT = 'input',
-    UPLOADING = 'uploading',
+    PREPARE = 'prepare',
+    UPLOAD = 'upload',
+    COMPLETE = 'complete',
     RESULT = 'result'
 }
 
 class PublishSogDialog extends Container {
-    show: (sogSettings: SogSettings) => Promise<PublishResult | null>;
+    show: (sogSettings: SogSettings) => Promise<DialogPublishResult | null>;
     hide: () => void;
     destroy: () => void;
 
-    private _state: DialogState = DialogState.INPUT;
+    // Input state
     private _contentInput: Container;
     private _nameInput: TextInput;
     private _descInput: TextAreaInput;
     private _confirmButton: Button;
     private _cancelButton: Button;
-    private _contentUploading: Container;
-    private _uploadStatusLabel: Label;
-    private _fileProgressContainer: Container;
-    private _cancelUploadButton: Button;
-    private _contentResult: Container;
+
+    // Phase state
+    private _contentPhases: Container;
+    private _phase: PublishPhase = PublishPhase.INPUT;
+
+    // Prepare phase
+    private _prepareRow: Container;
+    private _prepareIcon: Label;
+    private _prepareLabel: Label;
+    private _prepareProgress: Progress;
+    private _prepareStatus: Label;
+
+    // Upload phase
+    private _uploadRow: Container;
+    private _uploadIcon: Label;
+    private _uploadLabel: Label;
+    private _uploadProgress: Progress;
+    private _uploadStatus: Label;
+    private _toggleButton: Button;
+    private _fileListContainer: Container;
+
+    // Complete phase
+    private _completeRow: Container;
+    private _completeIcon: Label;
+    private _completeLabel: Label;
+    private _completeProgress: Progress;
+    private _completeStatus: Label;
+
+    // Result state (rendered inside _contentPhases below the checklist)
+    private _resultInfo: Container;
     private _resultLabel: Label;
-    private _linkContainer: Container;
-    private _linkLabel: Label;
+    private _linkInput: TextInput;
     private _copyButton: Button;
     private _closeButton: Button;
+
+    // Reusable cancel button (changes behaviour per phase)
+    private _phaseCancelButton: Button;
+
+    // Per-show mutable state (handlers registered once in constructor, these are reassigned each show())
+    private _resolve: ((value: DialogPublishResult | null) => void) | null = null;
+    private _publishResult: DialogPublishResult | null = null;
+    private _cancelSignal: { aborted: boolean } | undefined;
+    private _retrySignal: { fileName: string | null } = { fileName: null };
+    private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+    private _onConfirm: (() => void) | null = null;
 
     constructor(events: Events, args = {}) {
         args = {
@@ -50,14 +87,14 @@ class PublishSogDialog extends Container {
 
         const dialog = new Container({ id: 'dialog' });
 
-        // Header
+        // ---- Header ----
         const header = new Container({ id: 'header' });
         const headerText = new Label({ id: 'text', text: localize('popup.publish-sog.header') });
         header.append(headerText);
         dialog.append(header);
 
-        // Input state
-        this._contentInput = new Container({ id: 'content' });
+        // ---- Input state content ----
+        this._contentInput = new Container({ id: 'content-input' });
 
         const nameRow = new Container({ class: 'row' });
         const nameLabel = new Label({ class: 'label', text: localize('popup.publish-sog.name') });
@@ -75,70 +112,151 @@ class PublishSogDialog extends Container {
         this._contentInput.append(descRow);
         dialog.append(this._contentInput);
 
-        // Uploading state
-        this._contentUploading = new Container({ id: 'content-uploading', hidden: true });
-        this._uploadStatusLabel = new Label({ class: 'upload-status', text: localize('popup.publish-sog.preparing') });
-        this._fileProgressContainer = new Container({ class: 'file-progress-container' });
-        this._contentUploading.append(this._uploadStatusLabel);
-        this._contentUploading.append(this._fileProgressContainer);
-        dialog.append(this._contentUploading);
+        // ---- Phase content (checklist UI) ----
+        this._contentPhases = new Container({ id: 'content', hidden: true });
 
-        // Result state
-        this._contentResult = new Container({ id: 'content-result', hidden: true });
+        const phaseList = new Container({ class: 'phase-list' });
+
+        // Prepare phase row
+        this._prepareRow = new Container({ class: 'phase-row' });
+        this._prepareIcon = new Label({ class: 'phase-icon', text: '○' }); // ○
+        this._prepareLabel = new Label({ class: 'phase-label', text: localize('popup.publish-sog.phase-prepare') });
+        this._prepareProgress = new Progress({ class: 'phase-progress', value: 0 });
+        this._prepareStatus = new Label({ class: 'phase-status', text: localize('popup.publish-sog.status-waiting') });
+        this._prepareRow.append(this._prepareIcon);
+        this._prepareRow.append(this._prepareLabel);
+        this._prepareRow.append(this._prepareProgress);
+        this._prepareRow.append(this._prepareStatus);
+        phaseList.append(this._prepareRow);
+
+        // Upload phase row
+        this._uploadRow = new Container({ class: 'phase-row' });
+        this._uploadIcon = new Label({ class: 'phase-icon', text: '○' }); // ○
+        this._uploadLabel = new Label({ class: 'phase-label', text: localize('popup.publish-sog.phase-upload') });
+        this._uploadProgress = new Progress({ class: 'phase-progress', value: 0 });
+        this._uploadStatus = new Label({ class: 'phase-status', text: localize('popup.publish-sog.status-waiting') });
+        this._toggleButton = new Button({ class: 'toggle-button', text: '▶' }); // ▶
+        this._uploadRow.append(this._uploadIcon);
+        this._uploadRow.append(this._uploadLabel);
+        this._uploadRow.append(this._uploadProgress);
+        this._uploadRow.append(this._uploadStatus);
+        this._uploadRow.append(this._toggleButton);
+        phaseList.append(this._uploadRow);
+
+        // File details container (collapsible)
+        this._fileListContainer = new Container({ class: 'file-list', hidden: true });
+        phaseList.append(this._fileListContainer);
+
+        // Complete phase row
+        this._completeRow = new Container({ class: 'phase-row' });
+        this._completeIcon = new Label({ class: 'phase-icon', text: '○' }); // ○
+        this._completeLabel = new Label({ class: 'phase-label', text: localize('popup.publish-sog.phase-complete') });
+        this._completeProgress = new Progress({ class: 'phase-progress', value: 0 });
+        this._completeStatus = new Label({ class: 'phase-status', text: localize('popup.publish-sog.status-waiting') });
+        this._completeRow.append(this._completeIcon);
+        this._completeRow.append(this._completeLabel);
+        this._completeRow.append(this._completeProgress);
+        this._completeRow.append(this._completeStatus);
+        phaseList.append(this._completeRow);
+
+        this._contentPhases.append(phaseList);
+        dialog.append(this._contentPhases);
+
+        // Result info — direct child of dialog (not inside _contentPhases)
+        // so the hidden toggle works independently of _contentPhases visibility.
+        this._resultInfo = new Container({ class: 'result-container', hidden: true });
         this._resultLabel = new Label({ class: 'result-label', text: localize('popup.publish-sog.success') });
-        this._linkContainer = new Container({ class: 'link-row' });
-        const linkLabelTitle = new Label({ class: 'label', text: localize('popup.publish-sog.preview-link') });
-        this._linkLabel = new Label({ class: 'link-text' });
-        this._copyButton = new Button({ class: 'button', text: localize('popup.publish-sog.copy-link') });
-        this._linkContainer.append(linkLabelTitle);
-        this._linkContainer.append(this._linkLabel);
-        this._contentResult.append(this._resultLabel);
-        this._contentResult.append(this._linkContainer);
-        dialog.append(this._contentResult);
+        const linkRow = new Container({ class: 'link-row' });
+        const linkLabelTitle = new Label({ class: 'label', text: localize('popup.publish-sog.share-link') });
+        this._linkInput = new TextInput({ class: 'share-link-input' });
+        linkRow.append(linkLabelTitle);
+        linkRow.append(this._linkInput);
+        this._resultInfo.append(this._resultLabel);
+        this._resultInfo.append(linkRow);
+        dialog.append(this._resultInfo);
 
-        // Footer
+        // ---- Footer ----
         const footer = new Container({ id: 'footer' });
+
+        // Buttons for INPUT state
         this._cancelButton = new Button({ class: 'button', text: localize('popup.cancel') });
         this._confirmButton = new Button({ class: 'button', text: localize('popup.publish-sog.confirm') });
-        this._cancelUploadButton = new Button({ class: 'button', text: localize('popup.publish-sog.cancel-upload'), hidden: true });
+
+        // Button for PREPARE/UPLOAD/COMPLETE phases
+        this._phaseCancelButton = new Button({ class: 'button', text: localize('popup.cancel'), hidden: true });
+
+        // Buttons for RESULT state
         this._closeButton = new Button({ class: 'button', text: localize('popup.publish-sog.close'), hidden: true });
+        this._copyButton = new Button({ class: 'button', text: localize('popup.publish-sog.copy-link'), hidden: true });
 
         footer.append(this._cancelButton);
         footer.append(this._confirmButton);
-        footer.append(this._cancelUploadButton);
+        footer.append(this._phaseCancelButton);
         footer.append(this._closeButton);
         footer.append(this._copyButton);
-        this._copyButton.hidden = true;
 
         dialog.append(footer);
         this.append(dialog);
 
-        // State management
-        const setState = (state: DialogState) => {
-            this._state = state;
-            this._contentInput.hidden = state !== DialogState.INPUT;
-            this._contentUploading.hidden = state !== DialogState.UPLOADING;
-            this._contentResult.hidden = state !== DialogState.RESULT;
-            this._cancelButton.hidden = state !== DialogState.INPUT;
-            this._confirmButton.hidden = state !== DialogState.INPUT;
-            this._cancelUploadButton.hidden = state !== DialogState.UPLOADING;
-            this._closeButton.hidden = state !== DialogState.RESULT;
-            this._copyButton.hidden = state !== DialogState.RESULT;
+        // ---- State management ----
+        const setPhaseState = (phase: PublishPhase) => {
+            this._phase = phase;
+
+            const isInput = phase === PublishPhase.INPUT;
+            const isResult = phase === PublishPhase.RESULT;
+            // _contentPhases is visible during PREPARE/UPLOAD/COMPLETE *and* RESULT
+            const isPhases = !isInput;
+
+            this._contentInput.hidden = !isInput;
+            this._contentPhases.hidden = !isPhases;
+            this._resultInfo.hidden = !isResult;
+
+            // Footer buttons
+            this._cancelButton.hidden = !isInput;
+            this._confirmButton.hidden = !isInput;
+            this._phaseCancelButton.hidden = isInput || isResult;
+            this._closeButton.hidden = !isResult;
+            this._copyButton.hidden = !isResult;
+
+            // Cancel button enabled only in PREPARE phase
+            this._phaseCancelButton.enabled = phase === PublishPhase.PREPARE;
         };
 
-        let cancelSignal: { aborted: boolean } | undefined;
+        // ---- Update icon helpers ----
+        const setPhaseIcon = (icon: Label, phaseState: 'waiting' | 'active' | 'done' | 'error') => {
+            icon.class.remove('phase-icon-done', 'phase-icon-error', 'phase-icon-active');
+            switch (phaseState) {
+                case 'done':
+                    icon.text = '✓'; // ✓
+                    icon.class.add('phase-icon-done');
+                    break;
+                case 'active':
+                    icon.text = ''; // Spinner will be used instead
+                    icon.class.add('phase-icon-active');
+                    break;
+                case 'error':
+                    icon.text = '✗'; // ✗
+                    icon.class.add('phase-icon-error');
+                    break;
+                default:
+                    icon.text = '○'; // ○
+                    break;
+            }
+        };
 
-        // Event handlers
-        this._nameInput.on('change', () => {
-            this._confirmButton.disabled = !this._nameInput.value.trim();
+        // ---- Toggle file list ----
+        let fileListExpanded = false;
+        this._toggleButton.on('click', () => {
+            fileListExpanded = !fileListExpanded;
+            this._fileListContainer.hidden = !fileListExpanded;
+            this._toggleButton.text = fileListExpanded ? '▼' : '▶'; // ▼ : ▶
         });
 
-        this._closeButton.on('click', () => {
-            // Will be overridden per show() call
-        });
-
+        // ---- Copy button ----
         this._copyButton.on('click', () => {
-            navigator.clipboard.writeText(this._linkLabel.text).then(() => {
+            const url = this._linkInput.value;
+            if (!url) return;
+            navigator.clipboard.writeText(url).then(() => {
                 const orig = this._copyButton.text;
                 this._copyButton.text = localize('popup.publish-sog.copy-success');
                 setTimeout(() => {
@@ -149,58 +267,108 @@ class PublishSogDialog extends Container {
             });
         });
 
-        // Methods
+        // ---- Name input validation ----
+        this._nameInput.on('change', () => {
+            this._confirmButton.disabled = !this._nameInput.value.trim();
+        });
+
+        // ---- Button handlers (registered once) ----
+        // Each handler reads this._resolve / this._publishResult which are
+        // reassigned per show() call — avoids listener leak on repeated show().
+
+        this._cancelButton.on('click', () => {
+            if (this._phase === PublishPhase.INPUT) {
+                this._resolve?.(null);
+            } else if (this._phase === PublishPhase.PREPARE) {
+                if (this._cancelSignal) this._cancelSignal.aborted = true;
+                this._resolve?.(null);
+            }
+        });
+
+        this._phaseCancelButton.on('click', () => {
+            if (this._phase === PublishPhase.PREPARE) {
+                if (this._cancelSignal) this._cancelSignal.aborted = true;
+                this._resolve?.(null);
+            } else {
+                // Non-PREPARE: button acts as "Close" (e.g. in error state)
+                this._resolve?.(null);
+            }
+        });
+
+        this._closeButton.on('click', () => {
+            if (this._phase === PublishPhase.RESULT && this._publishResult) {
+                this._resolve?.(this._publishResult);
+            } else {
+                this._resolve?.(null);
+            }
+        });
+
+        this._confirmButton.on('click', () => {
+            // Per-show onConfirm is assigned to _onConfirm in show()
+            if (this._onConfirm) this._onConfirm();
+        });
+
+        // ---- show() method ----
         this.show = (sogSettings: SogSettings) => {
             // Reset UI
             this._nameInput.value = '';
             this._descInput.value = '';
             this._confirmButton.disabled = true;
-            this._uploadStatusLabel.text = localize('popup.publish-sog.preparing');
-            this._fileProgressContainer.clear();
-            this._linkLabel.text = '';
-            this._resultLabel.text = localize('popup.publish-sog.success');
-            setState(DialogState.INPUT);
+            this._linkInput.value = '';
+            this._prepareProgress.value = 0;
+            this._uploadProgress.value = 0;
+            this._completeProgress.value = 0;
+            setPhaseIcon(this._prepareIcon, 'waiting');
+            setPhaseIcon(this._uploadIcon, 'waiting');
+            setPhaseIcon(this._completeIcon, 'waiting');
+            this._prepareStatus.text = localize('popup.publish-sog.status-waiting');
+            this._uploadStatus.text = localize('popup.publish-sog.status-waiting');
+            this._completeStatus.text = localize('popup.publish-sog.status-waiting');
+            this._fileListContainer.clear();
+            this._fileListContainer.hidden = true;
+            fileListExpanded = false;
+            this._toggleButton.text = '▶';
 
+            setPhaseState(PublishPhase.INPUT);
             this.hidden = false;
             this.dom.focus();
 
-            let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
-            let publishResult: PublishResult | null = null;
+            // Reset per-show mutable state
+            this._publishResult = null;
+            this._cancelSignal = undefined;
+            this._retrySignal = { fileName: null };
+            // Reset phase-cancel button to default text/enabled (error handler may have changed it)
+            this._phaseCancelButton.text = localize('popup.cancel');
+            this._phaseCancelButton.enabled = true;
 
-            return new Promise<PublishResult | null>((resolve) => {
-                const onCancel = () => {
-                    if (cancelSignal) {
-                        cancelSignal.aborted = true;
-                        cancelSignal = undefined;
-                    }
-                    resolve(null);
-                };
+            return new Promise<DialogPublishResult | null>((resolve) => {
+                this._resolve = resolve;
 
-                // Close button in result state: resolve with stored result
-                this._closeButton.on('click', () => {
-                    if (this._state === DialogState.RESULT && publishResult) {
-                        resolve(publishResult);
-                    }
-                });
-
-                keydownHandler = (e: KeyboardEvent) => {
+                // Keyboard handler (reassigned each show())
+                this._keydownHandler = (e: KeyboardEvent) => {
                     switch (e.key) {
                         case 'Escape':
-                            if (this._state === DialogState.INPUT) onCancel();
+                            if (this._phase === PublishPhase.INPUT || this._phase === PublishPhase.PREPARE) {
+                                if (this._phase === PublishPhase.PREPARE && this._cancelSignal) {
+                                    this._cancelSignal.aborted = true;
+                                }
+                                resolve(null);
+                            }
                             break;
                         case 'Enter':
-                            if (!e.shiftKey && this._state === DialogState.INPUT && !this._confirmButton.disabled) onConfirm();
+                            if (!e.shiftKey && this._phase === PublishPhase.INPUT && !this._confirmButton.disabled) {
+                                this._onConfirm?.();
+                            }
                             break;
                         default:
                             e.stopPropagation();
                             break;
                     }
                 };
+                this.dom.addEventListener('keydown', this._keydownHandler);
 
-                this.dom.addEventListener('keydown', keydownHandler);
-                this._cancelButton.on('click', () => onCancel());
-
-                const onConfirm = async () => {
+                // ---- Confirm publish handler (reassigned each show()) ----
+                this._onConfirm = async () => {
                     const projectName = this._nameInput.value.trim();
                     if (!projectName) {
                         this._confirmButton.disabled = true;
@@ -210,14 +378,55 @@ class PublishSogDialog extends Container {
                     const splats = events.invoke('scene.splats');
                     if (!splats || splats.length === 0) return;
 
-                    setState(DialogState.UPLOADING);
-                    cancelSignal = { aborted: false };
+                    // Switch to PREPARE phase
+                    setPhaseState(PublishPhase.PREPARE);
+                    setPhaseIcon(this._prepareIcon, 'active');
+                    this._prepareStatus.text = localize('popup.publish-sog.status-waiting');
 
-                    this._cancelUploadButton.on('click', () => onCancel());
+                    this._cancelSignal = { aborted: false };
+                    this._retrySignal = { fileName: null };
 
-                    const onProgress = (progress: UploadProgress) => {
-                        this._uploadStatusLabel.text = `${localize('popup.publish-sog.uploading')} (${progress.overallProgress}%)`;
-                        this._renderFileProgress(progress.files);
+                    const onProgress = (progress: PublishProgress) => {
+                        if (this._cancelSignal?.aborted) return;
+
+                        switch (progress.phase) {
+                            case 'prepare':
+                                if (typeof progress.prepareProgress === 'number') {
+                                    this._prepareProgress.value = progress.prepareProgress;
+                                    if (progress.prepareProgress > 0) {
+                                        this._prepareStatus.text = `${progress.prepareProgress}%`;
+                                    }
+                                }
+                                break;
+
+                            case 'upload':
+                                if (this._phase !== PublishPhase.UPLOAD) {
+                                    setPhaseState(PublishPhase.UPLOAD);
+                                    setPhaseIcon(this._prepareIcon, 'done');
+                                    this._prepareStatus.text = localize('popup.publish-sog.status-done');
+                                    this._prepareProgress.value = 100;
+                                    setPhaseIcon(this._uploadIcon, 'active');
+                                }
+
+                                if (typeof progress.uploadProgress === 'number') {
+                                    this._uploadProgress.value = progress.uploadProgress;
+                                    this._uploadStatus.text = `${progress.uploadProgress}%`;
+                                }
+                                if (progress.files) {
+                                    this._renderFileList(progress.files, this._retrySignal);
+                                }
+                                break;
+
+                            case 'complete':
+                                setPhaseIcon(this._uploadIcon, 'done');
+                                this._uploadStatus.text = localize('popup.publish-sog.status-done');
+                                this._uploadProgress.value = 100;
+                                setPhaseState(PublishPhase.COMPLETE);
+                                setPhaseIcon(this._completeIcon, 'active');
+                                this._completeProgress.value = 50;
+                                this._completeStatus.text = localize('popup.publish-sog.status-completing');
+                                break;
+                        }
                     };
 
                     try {
@@ -226,30 +435,50 @@ class PublishSogDialog extends Container {
                             sogSettings,
                             projectName,
                             onProgress,
-                            cancelSignal
+                            this._cancelSignal,
+                            this._retrySignal
                         );
 
-                        cancelSignal = undefined;
-                        // Show result page — stay open so user can copy the link
-                        publishResult = result;
-                        setState(DialogState.RESULT);
-                        this._linkLabel.text = result.previewUrl;
-                        // Do NOT resolve — user must click Close button
+                        this._cancelSignal = undefined;
+
+                        setPhaseIcon(this._completeIcon, 'done');
+                        this._completeStatus.text = localize('popup.publish-sog.status-done');
+                        this._completeProgress.value = 100;
+
+                        this._publishResult = { shareId: result.shareId, shareUrl: result.shareUrl };
+                        this._linkInput.value = result.shareUrl;
+                        setPhaseState(PublishPhase.RESULT);
                     } catch (err) {
-                        cancelSignal = undefined;
-                        // Back to input state so user can retry
-                        setState(DialogState.INPUT);
                         const msg = err instanceof Error ? err.message : String(err);
-                        this._resultLabel.text = msg || localize('popup.publish-sog.failed');
-                        // Do NOT resolve — user can retry or cancel
+
+                        if (msg === 'Cancelled' || msg === 'Upload cancelled by user') {
+                            resolve(null);
+                            return;
+                        }
+
+                        if (this._phase === PublishPhase.PREPARE) {
+                            setPhaseIcon(this._prepareIcon, 'error');
+                            this._prepareStatus.text = msg;
+                        } else if (this._phase === PublishPhase.UPLOAD) {
+                            setPhaseIcon(this._uploadIcon, 'error');
+                            this._uploadStatus.text = msg;
+                        } else if (this._phase === PublishPhase.COMPLETE) {
+                            setPhaseIcon(this._completeIcon, 'error');
+                            this._completeStatus.text = msg;
+                        }
+
+                        // Keep dialog open for error inspection; turn cancel button into close
+                        this._phaseCancelButton.enabled = true;
+                        this._phaseCancelButton.text = localize('popup.publish-sog.close');
                     }
                 };
-
-                this._confirmButton.on('click', () => onConfirm());
             }).finally(() => {
-                if (keydownHandler) {
-                    this.dom.removeEventListener('keydown', keydownHandler);
+                if (this._keydownHandler) {
+                    this.dom.removeEventListener('keydown', this._keydownHandler);
+                    this._keydownHandler = null;
                 }
+                this._resolve = null;
+                this._onConfirm = null;
                 this.hide();
             });
         };
@@ -264,26 +493,61 @@ class PublishSogDialog extends Container {
         };
     }
 
-    private _renderFileProgress(files: UploadFileState[]) {
-        this._fileProgressContainer.clear();
+    /**
+     * Render the file list inside the collapsible container.
+     * Each file gets a row showing name, status, and (when failed) a retry button.
+     */
+    private _renderFileList(files: UploadFileState[], retrySignal: { fileName: string | null }) {
+        this._fileListContainer.clear();
+
         for (const file of files) {
-            const row = new Container({ class: 'file-progress-row' });
+            const row = new Container({ class: 'file-row' });
 
             const nameLabel = new Label({ class: 'file-name', text: file.name });
 
-            const progress = file.status === 'success' ? '100%' :
-                file.total > 0 ? `${Math.round((file.doneCount / file.total) * 100)}%` :
-                file.status === 'error' ? localize('popup.publish-sog.failed') : '...';
+            let statusText: string;
+            let statusClass: string;
+            if (file.status === 'success') {
+                statusText = '100%';
+                statusClass = 'file-status-success';
+            } else if (file.status === 'error') {
+                statusText = file.errorMessage || localize('popup.publish-sog.failed');
+                statusClass = 'file-status-error';
+            } else if (file.status === 'paused') {
+                statusText = localize('popup.publish-sog.status-waiting');
+                statusClass = 'file-status-paused';
+            } else if (file.total > 0) {
+                const pct = Math.round((file.doneCount / file.total) * 100);
+                statusText = `${pct}%`;
+                statusClass = 'file-status-uploading';
+            } else {
+                statusText = '...';
+                statusClass = 'file-status-pending';
+            }
 
-            const statusText = file.status === 'error' ? (file.errorMessage || localize('popup.publish-sog.failed')) : progress;
-            const statusLabel = new Label({ class: `file-status-${file.status}`, text: statusText });
+            const statusLabel = new Label({ class: statusClass, text: statusText });
 
             row.append(nameLabel);
             row.append(statusLabel);
-            this._fileProgressContainer.append(row);
+
+            // Retry button for failed files
+            if (file.status === 'error') {
+                const retryBtn = new Button({ class: 'retry-button', text: localize('popup.publish-sog.retry') });
+                retryBtn.on('click', () => {
+                    retrySignal.fileName = file.name;
+                    statusLabel.text = localize('popup.publish-sog.status-uploading');
+                    statusLabel.class.remove('file-status-error');
+                    statusLabel.class.add('file-status-uploading');
+                    retryBtn.enabled = false;
+                    // The upload callback will update this row on the next progress tick
+                });
+                row.append(retryBtn);
+            }
+
+            this._fileListContainer.append(row);
         }
     }
 }
 
 export { PublishSogDialog };
-export type { PublishResult };
+export type { DialogPublishResult };

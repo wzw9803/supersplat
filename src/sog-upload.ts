@@ -3,26 +3,29 @@ import { Splat } from './splat';
 import { serializeSogToFiles, SogSettings } from './splat-serialize';
 import { API_CONFIG, UPLOAD_CONFIG } from './utils/config';
 
+type PublishPhase = 'prepare' | 'upload' | 'complete';
+
 type UploadFileState = {
     uuid: string;
-    name: string;
+    name: string;         // original filename with extension, used for CDN URL construction
     total: number;
     doneCount: number;
     status: 'pending' | 'uploading' | 'success' | 'error' | 'paused';
     errorMessage?: string;
-    cdnUrl?: string;
 };
 
-type UploadProgress = {
-    files: UploadFileState[];
-    overallProgress: number; // 0-100
+type PublishProgress = {
+    phase: PublishPhase;
+    prepareProgress?: number;   // 0-100
+    uploadProgress?: number;    // 0-100 (aggregate of all files)
+    files?: UploadFileState[];  // per-file state list
 };
 
-type ProgressCallback = (progress: UploadProgress) => void;
+type ProgressCallback = (progress: PublishProgress) => void;
 
 type PublishResult = {
     shareId: string;
-    previewUrl: string;
+    shareUrl: string;
 };
 
 /**
@@ -52,192 +55,269 @@ const getMainFileName = (settings: SogSettings): string => {
 /**
  * Upload a SOG package to cloud storage and create a share record via the backend API.
  *
- * @param splats - The splat data to serialize and upload
- * @param sogSettings - SOG export settings (from ExportPopup)
- * @param projectName - User-provided project name
- * @param onProgress - Callback for per-file upload progress updates
- * @param cancelSignal - AbortSignal-like object; when its `aborted` property becomes true, cancels all uploads
- * @returns PublishResult with shareId and previewUrl
+ * The upload proceeds through three phases:
+ *   1. prepare  — serializes splat data to in-memory files (progress reported via
+ *      serializeSogToFiles' progressCallback)
+ *   2. upload   — uploads each file sequentially via KeUpload, with per-file retry support
+ *      driven by `retrySignal`
+ *   3. complete — POSTs the main file CDN URL to the backend API and returns the share URL
+ *
+ * CDN URLs are constructed manually from `UPLOAD_CONFIG.awsConfig.cdnHost` rather than
+ * relying on `data.url` from the SDK callback (which returns a signed S3 direct-access URL).
+ *
+ * @param splats       - The splat data to serialize and upload.
+ * @param sogSettings  - SOG export settings (from ExportPopup).
+ * @param projectName  - User-provided project name.
+ * @param onProgress   - Callback for phased progress updates.
+ * @param cancelSignal - AbortSignal-like object; setting `aborted = true` cancels the
+ *                       prepare phase. Upload/complete phases ignore it.
+ * @param retrySignal  - Mutable ref object; set `fileName` to the name of a failed file
+ *                       to trigger a retry via `KeUpload.retry()`.
+ * @returns PublishResult with shareId and shareUrl.
  */
 const uploadSogPackage = async (
     splats: Splat[],
     sogSettings: SogSettings,
     projectName: string,
     onProgress?: ProgressCallback,
-    cancelSignal?: { aborted: boolean }
+    cancelSignal?: { aborted: boolean },
+    retrySignal?: { fileName: string | null }
 ): Promise<PublishResult> => {
-    // 1. Serialize SOG data to in-memory files
-    const files = await serializeSogToFiles(splats, sogSettings);
+    // ---- Phase 1: Prepare files ----
+    onProgress?.({ phase: 'prepare', prepareProgress: 0 });
+
+    // Progress callback that bridges serializeSogToFiles' progress to our PublishProgress
+    const prepareProgressCb = (_phase: string, progress: number) => {
+        onProgress?.({ phase: 'prepare', prepareProgress: progress });
+    };
+
+    let files: Array<{ name: string; data: Uint8Array }>;
+    try {
+        files = await serializeSogToFiles(splats, sogSettings, cancelSignal, prepareProgressCb);
+    } catch (err) {
+        // Re-throw cancellation / serialization errors so the dialog can handle them
+        throw err;
+    }
 
     if (!files || files.length === 0) {
         throw new Error('No files to upload');
     }
 
-    // 2. Build upload path prefix
+    // Build upload path prefix
     const sanitized = sanitizeName(projectName);
     const basePath = `splat/${Date.now()}-${crypto.randomUUID()}/${sanitized}`;
 
-    // 3. State tracking
-    const fileStateMap = new Map<string, UploadFileState>();
-    const fileUrlMap = new Map<string, string>(); // fileName -> CDN URL
-    const uuidToFileName = new Map<string, string>();
-    const pendingUuids: string[] = [];
+    onProgress?.({ phase: 'prepare', prepareProgress: 100 });
 
-    let cancelled = false;
+    // ---- Phase 2: Upload files ----
+    const cdnHost = UPLOAD_CONFIG.awsConfig.cdnHost;
+    const cdnBucket = UPLOAD_CONFIG.awsConfig.bucket;
+    const fileStateMap = new Map<string, UploadFileState>();   // uuid -> state
+    const fileUrlMap = new Map<string, string>();               // fileName -> CDN URL
+    const uuidToFileName = new Map<string, string>();           // uuid -> fileName
+    const fileNameToUuid = new Map<string, string>();           // fileName -> uuid
 
-    // Check cancel signal periodically
-    if (cancelSignal) {
-        const checkCancel = () => {
-            if (cancelSignal.aborted && !cancelled) {
-                cancelled = true;
-                for (const uuid of pendingUuids) {
-                    try {
-                        KeUpload.cancel(uuid);
-                    } catch (_) { /* ignore cancel errors */ }
-                }
-            }
-        };
-        // Poll cancel signal
-        const interval = setInterval(checkCancel, 200);
-        // Store for cleanup later
-        (cancelSignal as any).__interval = interval;
-    }
+    // Completion is tracked via polling fileStateMap (not per-file promises),
+    // so that individual files can be retried on error without rejecting an aggregate Promise.all.
 
-    // 4. Helper: notify progress
-    const notifyProgress = () => {
+    /**
+     * Compute aggregate upload progress and notify.
+     */
+    const notifyUploadProgress = () => {
         if (!onProgress) return;
-        const fileStates = Array.from(fileStateMap.values());
-        const total = fileStates.reduce((sum, f) => sum + (f.total || 1), 0);
-        const done = fileStates.reduce((sum, f) => {
-            if (f.status === 'success') return sum + (f.total || 1);
-            if (f.status === 'error') return sum + (f.total || 1); // count as done for progress
-            return sum + f.doneCount;
-        }, 0);
-        onProgress({
-            files: fileStates,
-            overallProgress: total > 0 ? Math.round((done / total) * 100) : 0
-        });
+        const states = Array.from(fileStateMap.values());
+        let totalPieces = 0;
+        let donePieces = 0;
+        for (const s of states) {
+            const t = s.total || 1;
+            totalPieces += t;
+            if (s.status === 'success') {
+                donePieces += t;
+            } else if (s.status === 'error') {
+                donePieces += 0; // errors contribute nothing — user must retry
+            } else {
+                donePieces += s.doneCount;
+            }
+        }
+        const uploadProgress = totalPieces > 0 ? Math.round((donePieces / totalPieces) * 100) : 0;
+        onProgress({ phase: 'upload', uploadProgress, files: states });
     };
 
-    // 5. Upload each file
-    const uploadPromises: Promise<void>[] = [];
+    /**
+     * Start the upload for a single file via KeUpload.load().
+     * Callbacks update fileStateMap and notify progress.
+     * Completion is tracked via the polling loop (not per-file promises).
+     */
+    const startFileUpload = (file: { name: string; data: Uint8Array }): void => {
+        // Normalize filename: strip leading '/' from webp files (e.g. "/sh0.webp" → "sh0.webp")
+        const fileName = file.name.replace(/^\//, '');
+        const fileNameWithoutExt = fileName.replace(/\.[^/.]+$/, '');
+        const fileObj = new File([file.data as unknown as BlobPart], fileName);
 
-    for (const file of files) {
-        const uploadPromise = new Promise<void>((resolve, reject) => {
-            // Remove extension for fileName (SDK appends .{type} automatically)
-            const fileNameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+        KeUpload.load(
+            fileObj,
+            {
+                ...UPLOAD_CONFIG,
+                fileName: fileNameWithoutExt,
+                filePath: basePath
+            },
+            ({ error, data }) => {
+                const uuid = data?.uuid || error?.uuid;
 
-            // Build a File object from the in-memory data.
-            // TS 6.x typing uses ArrayBufferLike for Uint8Array; casting around it.
-            const fileObj = new File([file.data as unknown as BlobPart], file.name);
-
-            KeUpload.load(
-                fileObj,
-                {
-                    ...UPLOAD_CONFIG,
-                    fileName: fileNameWithoutExt,
-                    filePath: basePath
-                },
-                ({ error, data }) => {
-                    // Handle cancel
-                    if (cancelled) {
-                        resolve();
-                        return;
+                if (error) {
+                    const state = fileStateMap.get(uuid);
+                    if (state) {
+                        state.status = 'error';
+                        state.errorMessage = error.errMsg || 'Upload failed';
                     }
+                    notifyUploadProgress();
+                    return;
+                }
 
-                    const uuid = data?.uuid || error?.uuid;
+                if (!data) return;
 
-                    if (error) {
-                        // All retries exhausted — mark file as error
+                // Upload complete — construct CDN URL manually instead of using data.url
+                if (data.url) {
+                    // Debug: log SDK callback data and constructed CDN URL for verification
+                    console.log(`[upload] SDK callback data for "${fileName}":`, JSON.stringify(data, null, 2));
+
+                    if (uuid) {
                         const state = fileStateMap.get(uuid);
                         if (state) {
-                            state.status = 'error';
-                            state.errorMessage = error.errMsg || 'Upload failed';
+                            state.status = 'success';
                         }
-                        notifyProgress();
-                        reject(new Error(`Upload failed for ${file.name}: ${error.errMsg || 'unknown error'}`));
-                        return;
                     }
+                    // CDN URL: ${cdnHost}/${bucket}/${basePath}/${fileName}
+                    // (fileName was already normalized at start of startFileUpload)
+                    const cdnUrl = `${cdnHost}/${cdnBucket}/${basePath}/${fileName}`;
+                    console.log(`[upload] SDK data.url: ${data.url}`);
+                    console.log(`[upload] Constructed CDN URL for "${fileName}": ${cdnUrl}`);
 
-                    if (!data) return;
-
-                    // Upload complete — CDN URL available
-                    if (data.url) {
-                        if (uuid) {
-                            const state = fileStateMap.get(uuid);
-                            if (state) {
-                                state.status = 'success';
-                                state.cdnUrl = data.url;
-                            }
-                        }
-                        fileUrlMap.set(file.name, data.url);
-                        notifyProgress();
-                        resolve();
-                        return;
-                    }
-
-                    // Piece complete
-                    if (data.status === 'done') {
-                        if (uuid) {
-                            const state = fileStateMap.get(uuid);
-                            if (state) {
-                                state.doneCount = (state.doneCount || 0) + 1;
-                                state.status = 'uploading';
-                            }
-                        }
-                        notifyProgress();
-                        return;
-                    }
-
-                    // File initialized — first callback with metadata
-                    if (typeof data.total !== 'undefined') {
-                        const newState: UploadFileState = {
-                            uuid: uuid || '',
-                            name: data.name || file.name,
-                            total: data.total,
-                            doneCount: 0,
-                            status: 'uploading'
-                        };
-                        fileStateMap.set(newState.uuid, newState);
-                        uuidToFileName.set(newState.uuid, file.name);
-                        pendingUuids.push(newState.uuid);
-                        notifyProgress();
-                        return;
-                    }
-
-                    // Pause / Resume
-                    if (typeof data.isStop !== 'undefined') {
-                        if (uuid) {
-                            const state = fileStateMap.get(uuid);
-                            if (state) {
-                                state.status = data.isStop ? 'paused' : 'uploading';
-                            }
-                        }
-                        notifyProgress();
-                        return;
-                    }
+                    fileUrlMap.set(fileName, cdnUrl);
+                    notifyUploadProgress();
+                    return;
                 }
-            );
-        });
 
-        uploadPromises.push(uploadPromise);
+                // Piece complete
+                if (data.status === 'done') {
+                    if (uuid) {
+                        const state = fileStateMap.get(uuid);
+                        if (state) {
+                            state.doneCount = (state.doneCount || 0) + 1;
+                            state.status = 'uploading';
+                        }
+                    }
+                    notifyUploadProgress();
+                    return;
+                }
+
+                // File initialized — first callback with metadata
+                if (typeof data.total !== 'undefined') {
+                    const newState: UploadFileState = {
+                        uuid: uuid || '',
+                        name: fileName,
+                        total: data.total,
+                        doneCount: 0,
+                        status: 'uploading'
+                    };
+                    fileStateMap.set(newState.uuid, newState);
+                    uuidToFileName.set(newState.uuid, fileName);
+                    fileNameToUuid.set(fileName, newState.uuid);
+                    notifyUploadProgress();
+                    return;
+                }
+
+                // Pause / Resume
+                if (typeof data.isStop !== 'undefined') {
+                    if (uuid) {
+                        const state = fileStateMap.get(uuid);
+                        if (state) {
+                            state.status = data.isStop ? 'paused' : 'uploading';
+                        }
+                    }
+                    notifyUploadProgress();
+                    return;
+                }
+            }
+        );
+    };
+
+    // Kick off uploads for all files
+    for (const file of files) {
+        startFileUpload(file);
     }
 
-    // 6. Wait for all uploads
-    try {
-        await Promise.all(uploadPromises);
-    } finally {
-        // Clean up cancel polling
-        if (cancelSignal && (cancelSignal as any).__interval) {
-            clearInterval((cancelSignal as any).__interval);
+    // Re-architect: we don't use the per-file promises directly.
+    // Instead we poll for completion and handle retries.
+
+    /**
+     * Check whether all files have reached 'success'.
+     */
+    const allFilesDone = (): boolean => {
+        for (const file of files) {
+            // Use cleaned name (strip leading '/') to match what startFileUpload stores
+            const cleanName = file.name.replace(/^\//, '');
+            const uuid = fileNameToUuid.get(cleanName);
+            if (!uuid) return false;
+            const state = fileStateMap.get(uuid);
+            if (!state || state.status !== 'success') return false;
         }
-    }
+        return true;
+    };
 
-    if (cancelled) {
-        throw new Error('Upload cancelled');
-    }
+    /**
+     * Retry a failed file via KeUpload.retry().
+     */
+    const retryFile = (fileName: string) => {
+        const uuid = fileNameToUuid.get(fileName);
+        if (!uuid) return;
+        const state = fileStateMap.get(uuid);
+        if (!state || state.status !== 'error') return;
 
-    // 7. Determine main file CDN URL
+        // Reset state
+        state.status = 'uploading';
+        state.doneCount = 0;
+        state.errorMessage = undefined;
+        notifyUploadProgress();
+
+        // Call SDK retry — the existing callback will handle further events
+        try {
+            KeUpload.retry(uuid);
+        } catch (e) {
+            state.status = 'error';
+            state.errorMessage = `Retry failed: ${e instanceof Error ? e.message : String(e)}`;
+            notifyUploadProgress();
+        }
+    };
+
+    // ---- Wait for all uploads to complete (with retry support) ----
+    await new Promise<void>((resolveAll, _rejectAll) => {
+        let retryCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+        const checkDone = () => {
+            // Check retry signal from the dialog
+            if (retrySignal?.fileName) {
+                const name = retrySignal.fileName;
+                retrySignal.fileName = null; // consume the signal
+                retryFile(name);
+            }
+
+            if (allFilesDone()) {
+                if (retryCheckInterval) clearInterval(retryCheckInterval);
+                resolveAll();
+            }
+        };
+
+        // Poll for completion and retry signals
+        retryCheckInterval = setInterval(checkDone, 200);
+    });
+
+    onProgress?.({ phase: 'upload', uploadProgress: 100, files: Array.from(fileStateMap.values()) });
+
+    // ---- Phase 3: Complete — register with backend API ----
+    onProgress?.({ phase: 'complete' });
+
+    // Determine main file CDN URL
     const mainFileName = getMainFileName(sogSettings);
     const sceneUrl = fileUrlMap.get(mainFileName);
 
@@ -245,7 +325,9 @@ const uploadSogPackage = async (
         throw new Error(`Main file URL not found: ${mainFileName}. Available files: ${Array.from(fileUrlMap.keys()).join(', ')}`);
     }
 
-    // 8. POST to backend API to create share record
+    console.log(`[upload] Main file "${mainFileName}" CDN URL sent to API: ${sceneUrl}`);
+
+    // POST to backend API to create share record
     const apiUrl = `${API_CONFIG.apiHost}/api/scene-shares`;
     let shareId: string;
     let apiResult: any;
@@ -262,22 +344,21 @@ const uploadSogPackage = async (
         }
 
         apiResult = await response.json();
+        console.log(`[upload] API response:`, JSON.stringify(apiResult, null, 2));
         shareId = apiResult.shareId || apiResult.id || apiResult.data?.shareId || apiResult.data?.id;
 
         if (!shareId) {
             throw new Error(`API response missing shareId: ${JSON.stringify(apiResult)}`);
         }
     } catch (err) {
-        // Files are already uploaded; API call failed
         throw new Error(`Failed to create share record: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // 9. Construct preview URL (temporary — backend will provide this field later)
-    const previewUrl = apiResult?.previewUrl
-        || `${API_CONFIG.previewHost}${API_CONFIG.previewPath}?shareId=${shareId}`;
+    // Use shareUrl from backend response (no manual fallback)
+    const shareUrl = apiResult?.shareUrl || '';
 
-    return { shareId, previewUrl };
+    return { shareId, shareUrl };
 };
 
 export { uploadSogPackage };
-export type { UploadFileState, UploadProgress, ProgressCallback, PublishResult };
+export type { UploadFileState, PublishProgress, ProgressCallback, PublishResult, PublishPhase };

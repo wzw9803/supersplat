@@ -2,109 +2,161 @@
 
 #publish-sog-dialog {
     // Overlay on top of other dialogs (modal-on-modal pattern).
-    // Both export-popup and publish-sog-dialog are block-level 100vh siblings
-    // inside topContainer. Without absolute positioning they stack vertically,
-    // pushing publish-sog-dialog below the viewport.
     position: absolute;
     left: 0;
     top: 0;
     z-index: 10;
-    #content-uploading {
-        min-height: 100px;
-        padding: 12px;
 
-        .upload-status {
-            margin-bottom: 8px;
-            color: $text-secondary;
-            text-align: center;
-        }
-
-        .file-progress-container {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .file-progress-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 4px 8px;
-            background-color: $bcg-darken;
-            border-radius: 4px;
-
-            .file-name {
-                color: $text-primary;
-                flex: 1;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }
-
-            [class^="file-status-"] {
-                margin-left: 12px;
-                min-width: 60px;
-                text-align: right;
-            }
-
-            .file-status-uploading {
-                color: $text-secondary;
-            }
-
-            .file-status-success {
-                color: #4caf50;
-            }
-
-            .file-status-error {
-                color: #f44336;
-            }
-
-            .file-status-pending {
-                color: $text-darkest;
-            }
-
-            .file-status-paused {
-                color: #ff9800;
-            }
-        }
+    #content {
+        overflow-y: auto;
     }
 
-    #content-result {
-        min-height: 100px;
-        padding: 12px;
+    // ---- Phase checklist ----
+    .phase-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 8px 0;
+    }
+
+    .phase-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .phase-icon {
+        font-size: 16px;
+        width: 20px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+
+    .phase-icon-done {
+        color: #4caf50;
+    }
+
+    .phase-icon-active {
+        color: inherit;
+    }
+
+    .phase-icon-error {
+        color: #f44336;
+    }
+
+    .phase-label {
+        min-width: 100px;
+        flex-shrink: 0;
+        color: $text-primary;
+    }
+
+    .phase-progress {
+        flex: 1;
+        min-width: 60px;
+    }
+
+    .phase-status {
+        min-width: 60px;
+        text-align: right;
+        font-size: 12px;
+        flex-shrink: 0;
+        color: $text-secondary;
+    }
+
+    .toggle-button {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        font-size: 10px;
+        flex-shrink: 0;
+    }
+
+    // ---- File detail list (collapsible) ----
+    .file-list {
+        margin-left: 28px;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .file-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+    }
+
+    .file-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: $text-primary;
+    }
+
+    .file-status {
+        min-width: 80px;
+        font-size: 12px;
+        text-align: right;
+        flex-shrink: 0;
+    }
+
+    .file-status-success {
+        color: #4caf50;
+    }
+
+    .file-status-error {
+        color: #f44336;
+    }
+
+    .file-status-uploading {
+        color: $text-secondary;
+    }
+
+    .file-status-pending {
+        color: $text-darkest;
+    }
+
+    .file-status-paused {
+        color: #ff9800;
+    }
+
+    .retry-button {
+        font-size: 11px;
+        padding: 2px 8px;
+        flex-shrink: 0;
+    }
+
+    // ---- Result page ----
+    .result-container {
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
         gap: 12px;
+        padding: 16px 0;
+        text-align: center;
+    }
 
-        .result-label {
-            color: $text-primary;
-            font-size: 14px;
-            font-weight: bold;
+    .result-label {
+        color: $text-primary;
+        font-size: 16px;
+    }
+
+    .link-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+
+        .label {
+            flex-shrink: 0;
+            color: $text-secondary;
         }
+    }
 
-        .link-row {
-            display: flex;
-            align-items: center;
-            width: 100%;
-
-            .label {
-                width: 80px;
-                margin: 0;
-                flex-shrink: 0;
-                color: $text-secondary;
-            }
-
-            .link-text {
-                flex: 1;
-                color: $text-primary;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-                margin: 0;
-            }
-        }
+    .share-link-input {
+        flex: 1;
+        font-family: monospace;
+        font-size: 12px;
     }
 
     #footer {

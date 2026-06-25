@@ -1222,37 +1222,61 @@ const extractDataTable = (splats: Splat[], settings: SerializeSettings): DataTab
     return dataTable;
 };
 
-// Bridge splat-transform progress events to supersplat's events.
-const createProgressRenderer = (header: string, events?: Events): Renderer => ({
+// Bridge splat-transform progress events to supersplat's events or a callback.
+// When progressCallback is provided, it is used instead of the global events bus,
+// suppressing the global progress dialog (used by the publish flow).
+const createProgressRenderer = (header: string, events?: Events, progressCallback?: (phase: string, progress: number) => void): Renderer => ({
     handle: (event: LogEvent) => {
         switch (event.kind) {
             case 'scopeStart':
                 if (event.depth === 0) {
-                    events?.fire('progressStart', header);
+                    if (progressCallback) {
+                        progressCallback(header, 0);
+                    } else {
+                        events?.fire('progressStart', header);
+                    }
                 } else {
-                    events?.fire('progressUpdate', {
-                        text: event.index !== undefined && event.total !== undefined ?
-                            `Step ${event.index} of ${event.total}: ${event.name}` :
-                            event.name,
-                        progress: 0
-                    });
+                    if (!progressCallback) {
+                        events?.fire('progressUpdate', {
+                            text: event.index !== undefined && event.total !== undefined ?
+                                `Step ${event.index} of ${event.total}: ${event.name}` :
+                                event.name,
+                            progress: 0
+                        });
+                    }
                 }
                 break;
             case 'scopeEnd':
                 if (event.depth === 0) {
-                    events?.fire('progressEnd');
+                    if (progressCallback) {
+                        progressCallback(header, 100);
+                    } else {
+                        events?.fire('progressEnd');
+                    }
                 }
                 break;
             case 'barStart':
-                events?.fire('progressUpdate', { text: event.name, progress: 0 });
+                if (progressCallback) {
+                    progressCallback(event.name, 0);
+                } else {
+                    events?.fire('progressUpdate', { text: event.name, progress: 0 });
+                }
                 break;
-            case 'barTick':
-                events?.fire('progressUpdate', {
-                    progress: event.total > 0 ? 100 * event.current / event.total : 0
-                });
+            case 'barTick': {
+                const pct = event.total > 0 ? 100 * event.current / event.total : 0;
+                if (progressCallback) {
+                    progressCallback(header, Math.round(pct));
+                } else {
+                    events?.fire('progressUpdate', { progress: pct });
+                }
                 break;
+            }
             case 'barEnd':
-                events?.fire('progressUpdate', { progress: 100 });
+                if (progressCallback) {
+                    progressCallback(header, 100);
+                } else {
+                    events?.fire('progressUpdate', { progress: 100 });
+                }
                 break;
             case 'message':
                 if (event.level === 'error') console.error(event.text);
@@ -1403,15 +1427,47 @@ const serializeSog = async (splats: Splat[], settings: SogSettings, fs: FileSyst
  * Reuses the existing extractDataTable + writeSogInternal pipeline,
  * collecting output files in a MemoryFileSystem.
  *
+ * @param splats - The splat data to serialize.
+ * @param settings - SOG export settings.
+ * @param cancelSignal - When `aborted` becomes true, serialization is cancelled.
+ * @param progressCallback - Optional callback `(phase, progress)`. When provided,
+ * the global progress dialog is suppressed.
  * @returns Array of {name, data} for each file to upload.
  */
-const serializeSogToFiles = async (splats: Splat[], settings: SogSettings): Promise<Array<{name: string, data: Uint8Array}>> => {
+const serializeSogToFiles = async (
+    splats: Splat[],
+    settings: SogSettings,
+    cancelSignal?: { aborted: boolean },
+    progressCallback?: (phase: string, progress: number) => void
+): Promise<Array<{name: string, data: Uint8Array}>> => {
     const { iterations = 10, sogFormat = 'unbundled', sceneConfig, events } = settings;
 
-    splatTransformLogger.setRenderer(createProgressRenderer('Preparing SOG files', events));
+    // Use progressCallback if provided (suppresses global progress dialog);
+    // otherwise fall back to the global events bus.
+    splatTransformLogger.setRenderer(
+        createProgressRenderer('Preparing SOG files', progressCallback ? undefined : events, progressCallback)
+    );
 
-    // Extract splat data to DataTable
+    // Yield to the browser so the UI can render the "preparing" state before
+    // the synchronous extractDataTable work blocks the main thread.
+    await new Promise<void>((r) => {
+        requestAnimationFrame(() => r());
+    });
+
+    // Check cancellation before heavy work
+    if (cancelSignal?.aborted) {
+        splatTransformLogger.unwindAll(true);
+        throw new Error('Cancelled');
+    }
+
+    // Extract splat data to DataTable (CPU-intensive, synchronous)
     const dataTable = extractDataTable(splats, settings);
+
+    // Check cancellation after extraction
+    if (cancelSignal?.aborted) {
+        splatTransformLogger.unwindAll(true);
+        throw new Error('Cancelled');
+    }
 
     const memFs = new MemoryFileSystem();
     const bundle = sogFormat === 'bundled';
@@ -1425,6 +1481,12 @@ const serializeSogToFiles = async (splats: Splat[], settings: SogSettings): Prom
             iterations,
             createDevice: createGpuDevice
         }, memFs);
+
+        // Check cancellation after GPU processing
+        if (cancelSignal?.aborted) {
+            splatTransformLogger.unwindAll(true);
+            throw new Error('Cancelled');
+        }
 
         // Write scene.json into the memory filesystem if provided
         if (sceneConfig) {
