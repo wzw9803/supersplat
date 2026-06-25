@@ -1330,12 +1330,12 @@ type SogSettings = SerializeSettings & {
     iterations: number;
     sogFormat?: 'bundled' | 'unbundled';
     includeSettings?: boolean;
-    experienceSettings?: ExperienceSettings;
+    sceneConfig?: Record<string, unknown>;
     events?: Events;
 };
 
 const serializeSog = async (splats: Splat[], settings: SogSettings, fs: FileSystem): Promise<void> => {
-    const { iterations = 10, sogFormat = 'unbundled', includeSettings = false, experienceSettings, events } = settings;
+    const { iterations = 10, sogFormat = 'unbundled', includeSettings = false, sceneConfig, events } = settings;
 
     splatTransformLogger.setRenderer(createProgressRenderer('Exporting SOG', events));
 
@@ -1371,12 +1371,12 @@ const serializeSog = async (splats: Splat[], settings: SogSettings, fs: FileSyst
                 createDevice: createGpuDevice
             }, memFs);
 
-            // Write settings.json into the memory filesystem
-            if (experienceSettings) {
-                const settingsJson = JSON.stringify(experienceSettings, null, 2);
-                const settingsWriter = await memFs.createWriter('settings.json');
-                await settingsWriter.write(new TextEncoder().encode(settingsJson));
-                await settingsWriter.close();
+            // Write scene.json into the memory filesystem
+            if (sceneConfig) {
+                const sceneJson = JSON.stringify(sceneConfig, null, 2);
+                const sceneWriter = await memFs.createWriter('scene.json');
+                await sceneWriter.write(new TextEncoder().encode(sceneJson));
+                await sceneWriter.close();
             }
 
             // Pack all files into a ZIP (same pattern as serializeViewer ZIP mode)

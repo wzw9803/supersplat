@@ -3,7 +3,7 @@ import { BooleanInput, Button, ColorPicker, Container, Element, Label, SelectInp
 import { Pose } from '../camera-poses';
 import { localize } from './localization';
 import { Events } from '../events';
-import { ExportType, SogExportSettings, SceneExportOptions } from '../file-handler';
+import { ExportType, SceneExportOptions } from '../file-handler';
 import { AnimTrack, ExperienceSettings, defaultPostEffectSettings } from '../splat-serialize';
 import sceneExport from './svg/export.svg';
 
@@ -311,7 +311,7 @@ class ExportPopup extends Container {
         const includeSettingsToggle = new BooleanInput({
             class: 'boolean',
             type: 'toggle',
-            value: false
+            value: true
         });
 
         includeSettingsRow.append(includeSettingsLabel);
@@ -449,7 +449,7 @@ class ExportPopup extends Container {
             minOpacitySlider.value = 1 / 255;
             removeInvalidToggle.value = true;
             sogFormatSelect.value = 'unbundled';
-            includeSettingsToggle.value = false;
+            includeSettingsToggle.value = true;
 
             // filename
             filenameEntry.value = splatNames[0];
@@ -471,11 +471,12 @@ class ExportPopup extends Container {
                     break;
             }
 
-            // sog-package: settings rows visibility
-            colorRow.hidden = true;
-            fovRow.hidden = true;
-            animationRow.hidden = true;
-            loopRow.hidden = true;
+            // sog-package: settings rows visibility (default visible)
+            colorRow.hidden = false;
+            fovRow.hidden = false;
+            animationRow.hidden = false;
+            loopRow.hidden = false;
+            loopSelect.enabled = animationToggle.value;
 
             // viewer
             const bgClr = events.invoke('bgClr');
@@ -614,6 +615,7 @@ class ExportPopup extends Container {
 
             const assembleSogPackageOptions = () : SceneExportOptions => {
                 const includeSettings = includeSettingsToggle.value;
+                const sogFormat = sogFormatSelect.value as 'bundled' | 'unbundled';
 
                 const result: SceneExportOptions = {
                     filename: filenameEntry.value,
@@ -625,13 +627,32 @@ class ExportPopup extends Container {
                     },
                     sogExportSettings: {
                         iterations: iterationsSlider.value,
-                        sogFormat: sogFormatSelect.value as 'bundled' | 'unbundled',
+                        sogFormat,
                         includeSettings
                     }
                 };
 
                 if (includeSettings) {
-                    result.sogExportSettings!.experienceSettings = assembleExperienceSettings(animationToggle.value);
+                    const fov = fovSlider.value;
+                    const pose = events.invoke('camera.getPose');
+                    const name = removeKnownExtension(splatNames[0]);
+
+                    result.sogExportSettings!.sceneConfig = {
+                        name,
+                        type: 'scene',
+                        url: sogFormat === 'bundled' ? 'output.sog' : 'meta.json',
+                        position: [0, 0, 0],
+                        rotation: [0, 0, 180],
+                        scale: [1, 1, 1],
+                        config: {
+                            camera: {
+                                fov,
+                                eyeHeight: 1.3,
+                                position: pose?.position ? [pose.position.x, pose.position.y, pose.position.z] : [0, 0, 0],
+                                target: pose?.target ? [pose.target.x, pose.target.y, pose.target.z] : [0, 0, 0]
+                            }
+                        }
+                    };
                 }
 
                 return result;

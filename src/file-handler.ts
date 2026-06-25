@@ -20,7 +20,7 @@ type SogExportSettings = {
     iterations: number;
     sogFormat: 'bundled' | 'unbundled';
     includeSettings: boolean;
-    experienceSettings?: import('./splat-serialize').ExperienceSettings;
+    sceneConfig?: Record<string, unknown>;
 };
 
 interface SceneExportOptions {
@@ -588,8 +588,8 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                         iterations: options.sogExportSettings!.iterations ?? 10,
                         sogFormat: options.sogExportSettings!.sogFormat ?? 'unbundled',
                         includeSettings: true,
-                        experienceSettings: options.sogExportSettings!.includeSettings
-                            ? options.sogExportSettings!.experienceSettings
+                        sceneConfig: options.sogExportSettings!.includeSettings
+                            ? options.sogExportSettings!.sceneConfig
                             : undefined,
                         events
                     };
