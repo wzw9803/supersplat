@@ -365,8 +365,15 @@ class ExportPopup extends Container {
             text: localize('popup.export')
         });
 
+        const publishButton = new Button({
+            class: 'button',
+            text: localize('popup.export.publish'),
+            hidden: true
+        });
+
         footer.append(cancelButton);
         footer.append(exportButton);
+        footer.append(publishButton);
 
         dialog.append(header);
         dialog.append(content);
@@ -378,9 +385,11 @@ class ExportPopup extends Container {
 
         let onCancel: () => void;
         let onExport: () => void;
+        let onPublish: () => void;
 
         cancelButton.on('click', () => onCancel());
         exportButton.on('click', () => onExport());
+        publishButton.on('click', () => onPublish());
 
         const keydown = (e: KeyboardEvent) => {
             switch (e.key) {
@@ -501,6 +510,9 @@ class ExportPopup extends Container {
             .sort((a, b) => a.frame - b.frame);
 
             reset(exportType, splatNames, orderedPoses.length > 0);
+
+            // publish button only shown for sog-package export
+            publishButton.hidden = exportType !== 'sog-package';
 
             // filename is only shown in safari where file picker is not supported
             filenameRow.hidden = !showFilenameEdit;
@@ -680,6 +692,21 @@ class ExportPopup extends Container {
                         case 'viewer':
                             resolve(assembleViewerOptions());
                             break;
+                    }
+                };
+
+                onPublish = () => {
+                    // Show publish dialog on top of ExportPopup (modal-on-modal).
+                    // Do NOT resolve the main promise — ExportPopup stays visible.
+                    const sogOptions = assembleSogPackageOptions();
+                    if (sogOptions.sogExportSettings) {
+                        // Combine serializeSettings + sogExportSettings into SogSettings
+                        const sogSettings = {
+                            ...sogOptions.serializeSettings,
+                            ...sogOptions.sogExportSettings,
+                            events
+                        };
+                        events.fire('publish.sog.show', sogSettings);
                     }
                 };
             }).finally(() => {

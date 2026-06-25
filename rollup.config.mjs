@@ -1,6 +1,7 @@
 import path from 'path';
 
 import alias from '@rollup/plugin-alias';
+import commonjs from '@rollup/plugin-commonjs';
 import image from '@rollup/plugin-image';
 import json from '@rollup/plugin-json';
 import resolve from '@rollup/plugin-node-resolve';
@@ -72,7 +73,13 @@ const application = {
         typescript({
             tsconfig: './tsconfig.json'
         }),
-        resolve(),
+        resolve({
+            browser: true,
+            preferBuiltins: false
+        }),
+        commonjs({
+            include: ['node_modules/**']
+        }),
         image({ dom: false }),
         json(),
         scss({

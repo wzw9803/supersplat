@@ -1398,12 +1398,57 @@ const serializeSog = async (splats: Splat[], settings: SogSettings, fs: FileSyst
     }
 };
 
+/**
+ * Serialize SOG data to in-memory files for upload (no ZIP wrapping).
+ * Reuses the existing extractDataTable + writeSogInternal pipeline,
+ * collecting output files in a MemoryFileSystem.
+ *
+ * @returns Array of {name, data} for each file to upload.
+ */
+const serializeSogToFiles = async (splats: Splat[], settings: SogSettings): Promise<Array<{name: string, data: Uint8Array}>> => {
+    const { iterations = 10, sogFormat = 'unbundled', sceneConfig, events } = settings;
+
+    splatTransformLogger.setRenderer(createProgressRenderer('Preparing SOG files', events));
+
+    // Extract splat data to DataTable
+    const dataTable = extractDataTable(splats, settings);
+
+    const memFs = new MemoryFileSystem();
+    const bundle = sogFormat === 'bundled';
+    const sogFilename = bundle ? 'output.sog' : 'meta.json';
+
+    try {
+        await writeSogInternal({
+            filename: sogFilename,
+            dataTable,
+            bundle,
+            iterations,
+            createDevice: createGpuDevice
+        }, memFs);
+
+        // Write scene.json into the memory filesystem if provided
+        if (sceneConfig) {
+            const sceneJson = JSON.stringify(sceneConfig, null, 2);
+            const sceneWriter = await memFs.createWriter('scene.json');
+            await sceneWriter.write(new TextEncoder().encode(sceneJson));
+            await sceneWriter.close();
+        }
+
+        // Convert MemoryFileSystem results to array
+        return Array.from(memFs.results.entries()).map(([name, data]) => ({ name, data }));
+    } catch (err) {
+        splatTransformLogger.unwindAll(true);
+        throw err;
+    }
+};
+
 export {
     Writer,
     serializePly,
     serializePlyCompressed,
     serializeSplat,
     serializeSog,
+    serializeSogToFiles,
     serializeViewer,
     AnimTrack,
     CameraPose,

@@ -26,10 +26,12 @@
         "node": ">=20.19.0"
     },
     "devDependencies": {
+        "@ke/upload-sdk": "2.0.0-beta8",
         "@playcanvas/eslint-config": "2.1.0",
-        "@playcanvas/splat-transform": "2.5.1",
         "@playcanvas/pcui": "6.1.4",
+        "@playcanvas/splat-transform": "2.5.1",
         "@rollup/plugin-alias": "6.0.0",
+        "@rollup/plugin-commonjs": "^29.0.3",
         "@rollup/plugin-image": "3.0.3",
         "@rollup/plugin-json": "6.1.0",
         "@rollup/plugin-node-resolve": "16.0.3",

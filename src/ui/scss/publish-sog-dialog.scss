@@ -1,0 +1,122 @@
+@use 'colors.scss' as *;
+
+#publish-sog-dialog {
+    // Overlay on top of other dialogs (modal-on-modal pattern).
+    // Both export-popup and publish-sog-dialog are block-level 100vh siblings
+    // inside topContainer. Without absolute positioning they stack vertically,
+    // pushing publish-sog-dialog below the viewport.
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 10;
+    #content-uploading {
+        min-height: 100px;
+        padding: 12px;
+
+        .upload-status {
+            margin-bottom: 8px;
+            color: $text-secondary;
+            text-align: center;
+        }
+
+        .file-progress-container {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .file-progress-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 8px;
+            background-color: $bcg-darken;
+            border-radius: 4px;
+
+            .file-name {
+                color: $text-primary;
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            [class^="file-status-"] {
+                margin-left: 12px;
+                min-width: 60px;
+                text-align: right;
+            }
+
+            .file-status-uploading {
+                color: $text-secondary;
+            }
+
+            .file-status-success {
+                color: #4caf50;
+            }
+
+            .file-status-error {
+                color: #f44336;
+            }
+
+            .file-status-pending {
+                color: $text-darkest;
+            }
+
+            .file-status-paused {
+                color: #ff9800;
+            }
+        }
+    }
+
+    #content-result {
+        min-height: 100px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+
+        .result-label {
+            color: $text-primary;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .link-row {
+            display: flex;
+            align-items: center;
+            width: 100%;
+
+            .label {
+                width: 80px;
+                margin: 0;
+                flex-shrink: 0;
+                color: $text-secondary;
+            }
+
+            .link-text {
+                flex: 1;
+                color: $text-primary;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                margin: 0;
+            }
+        }
+    }
+
+    #footer {
+        .button {
+            width: 120px;
+            height: 30px;
+            border-radius: 4px;
+
+            &:hover {
+                color: $text-primary;
+                background-color: $clr-hilight;
+            }
+        }
+    }
+}

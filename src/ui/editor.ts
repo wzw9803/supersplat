@@ -15,6 +15,7 @@ import logo from './playcanvas-logo.png';
 import { Popup, ShowOptions } from './popup';
 import { Progress } from './progress';
 import { PublishSettingsDialog } from './publish-settings-dialog';
+import { PublishSogDialog } from './publish-sog-dialog';
 import { RightToolbar } from './right-toolbar';
 import { ScenePanel } from './scene-panel';
 import { ShortcutsPopup } from './shortcuts-popup';
@@ -185,6 +186,9 @@ class EditorUI {
         // publish settings
         const publishSettingsDialog = new PublishSettingsDialog(events);
 
+        // sog publish dialog
+        const publishSogDialog = new PublishSogDialog(events);
+
         // image settings
         const imageSettingsDialog = new ImageSettingsDialog(events);
 
@@ -197,6 +201,7 @@ class EditorUI {
         topContainer.append(popup);
         topContainer.append(exportPopup);
         topContainer.append(publishSettingsDialog);
+        topContainer.append(publishSogDialog);
         topContainer.append(imageSettingsDialog);
         topContainer.append(videoSettingsDialog);
         topContainer.append(shortcutsPopup);
@@ -222,6 +227,10 @@ class EditorUI {
 
         events.function('show.exportPopup', (exportType, splatNames: [string], showFilenameEdit: boolean) => {
             return exportPopup.show(exportType, splatNames, showFilenameEdit);
+        });
+
+        events.on('publish.sog.show', (sogSettings: any) => {
+            publishSogDialog.show(sogSettings);
         });
 
         events.function('show.publishSettingsDialog', async () => {
