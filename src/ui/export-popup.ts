@@ -649,6 +649,20 @@ class ExportPopup extends Container {
                     const pose = events.invoke('camera.getPose');
                     const name = removeKnownExtension(splatNames[0]);
 
+                    const cameraPosition: [number, number, number] = pose?.position
+                        ? [pose.position.x, pose.position.y, pose.position.z]
+                        : [0, 0, 0];
+                    const cameraTarget: [number, number, number] = pose?.target
+                        ? [pose.target.x, pose.target.y, pose.target.z]
+                        : [0, 0, 0];
+
+                    console.log('🔵 [supersplat] 导出 sceneConfig 相机数据:');
+                    console.log('  position:', cameraPosition);
+                    console.log('  target:', cameraTarget);
+                    console.log('  fov:', fov);
+                    console.log('  rotation(场景节点):', [0, 0, 180]);
+                    console.log('  position(场景节点):', [0, 0, 0]);
+
                     result.sogExportSettings!.sceneConfig = {
                         name,
                         type: 'scene',
@@ -660,8 +674,8 @@ class ExportPopup extends Container {
                             camera: {
                                 fov,
                                 eyeHeight: 1.3,
-                                position: pose?.position ? [pose.position.x, pose.position.y, pose.position.z] : [0, 0, 0],
-                                target: pose?.target ? [pose.target.x, pose.target.y, pose.target.z] : [0, 0, 0]
+                                position: cameraPosition,
+                                target: cameraTarget
                             }
                         }
                     };
