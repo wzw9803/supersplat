@@ -202,11 +202,12 @@ class Menu extends Container {
             text: localize('menu.file.export'),
             icon: createSvg(sceneExport),
             subMenu: exportMenuPanel
-        }, {
-            text: localize('menu.file.publish', { ellipsis: true }),
-            icon: createSvg(scenePublish),
-            isEnabled: () => !events.invoke('scene.empty'),
-            onSelect: async () => await events.invoke('show.publishSettingsDialog')
+        // PlayCanvas publish — 隐藏入口，代码保留
+        // }, {
+        //     text: localize('menu.file.publish', { ellipsis: true }),
+        //     icon: createSvg(scenePublish),
+        //     isEnabled: () => !events.invoke('scene.empty'),
+        //     onSelect: async () => await events.invoke('show.publishSettingsDialog')
         }]);
 
         const selectionMenuPanel = new MenuPanel([{
