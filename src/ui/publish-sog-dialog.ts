@@ -378,13 +378,17 @@ class PublishSogDialog extends Container {
                     const splats = events.invoke('scene.splats');
                     if (!splats || splats.length === 0) return;
 
-                    // Switch to PREPARE phase
+                    // Switch to PREPARE phase — yield to browser for paint before heavy work
                     setPhaseState(PublishPhase.PREPARE);
                     setPhaseIcon(this._prepareIcon, 'active');
                     this._prepareStatus.text = localize('popup.publish-sog.status-waiting');
 
                     this._cancelSignal = { aborted: false };
                     this._retrySignal = { fileName: null };
+
+                    // Yield to the browser so the PREPARE UI renders before
+                    // serializeSogToFiles blocks the main thread
+                    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
                     const onProgress = (progress: PublishProgress) => {
                         if (this._cancelSignal?.aborted) return;
