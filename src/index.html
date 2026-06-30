@@ -19,7 +19,8 @@
             if (!c.api) c.api = {};
             if (!c.aws) c.aws = {};
             // 非本地环境自动使用相对路径（兜底逻辑）
-            if (!c.api.apiHost && window.location.hostname !== 'localhost') {
+            // localhost 和 IP 地址访问均视为本地开发环境，保留默认 apiHost
+            if (!c.api.apiHost && window.location.hostname !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname)) {
                 c.api.apiHost = '';
             }
         </script>
