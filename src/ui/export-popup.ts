@@ -169,6 +169,34 @@ class ExportPopup extends Container {
         fovRow.append(fovLabel);
         fovRow.append(fovSlider);
 
+        // viewer: tonemapping
+
+        const tonemappingRow = new Container({
+            class: 'row'
+        });
+
+        const tonemappingLabel = new Label({
+            class: 'label',
+            text: localize('panel.view-options.tonemapping')
+        });
+
+        const tonemappingSelect = new SelectInput({
+            class: 'select',
+            defaultValue: 'none',
+            options: [
+                { v: 'none', t: localize('panel.view-options.tonemapping.none') },
+                { v: 'linear', t: localize('panel.view-options.tonemapping.linear') },
+                { v: 'neutral', t: localize('panel.view-options.tonemapping.neutral') },
+                { v: 'aces', t: localize('panel.view-options.tonemapping.aces') },
+                { v: 'aces2', t: localize('panel.view-options.tonemapping.aces2') },
+                { v: 'filmic', t: localize('panel.view-options.tonemapping.filmic') },
+                { v: 'hejl', t: localize('panel.view-options.tonemapping.hejl') }
+            ]
+        });
+
+        tonemappingRow.append(tonemappingLabel);
+        tonemappingRow.append(tonemappingSelect);
+
         // compress
 
         const compressRow = new Container({
@@ -342,6 +370,7 @@ class ExportPopup extends Container {
         content.append(loopRow);
         content.append(colorRow);
         content.append(fovRow);
+        content.append(tonemappingRow);
         content.append(compressRow);
         content.append(bandsRow);
         content.append(iterationsRow);
@@ -424,6 +453,7 @@ class ExportPopup extends Container {
         includeSettingsToggle.on('change', (value: boolean) => {
             colorRow.hidden = !value;
             fovRow.hidden = !value;
+            tonemappingRow.hidden = !value;
             animationRow.hidden = !value;
             loopRow.hidden = !value || !animationToggle.value;
             loopSelect.enabled = value && animationToggle.value;
@@ -431,15 +461,15 @@ class ExportPopup extends Container {
 
         const reset = (exportType: ExportType, splatNames: string[], hasPoses: boolean) => {
             const allRows = [
-                viewerTypeRow, animationRow, loopRow, colorRow, fovRow, compressRow, bandsRow, iterationsRow, minOpacityRow, removeInvalidRow, sogFormatRow, includeSettingsRow, filenameRow
+                viewerTypeRow, animationRow, loopRow, colorRow, fovRow, tonemappingRow, compressRow, bandsRow, iterationsRow, minOpacityRow, removeInvalidRow, sogFormatRow, includeSettingsRow, filenameRow
             ];
 
             const activeRows = {
                 ply: [compressRow, bandsRow, filenameRow],
                 splat: [filenameRow],
                 sog: [bandsRow, iterationsRow, filenameRow],
-                'sog-package': [bandsRow, iterationsRow, minOpacityRow, removeInvalidRow, sogFormatRow, includeSettingsRow, colorRow, fovRow, animationRow, loopRow, filenameRow],
-                viewer: [viewerTypeRow, animationRow, loopRow, colorRow, fovRow, bandsRow, filenameRow]
+                'sog-package': [bandsRow, iterationsRow, minOpacityRow, removeInvalidRow, sogFormatRow, includeSettingsRow, colorRow, fovRow, tonemappingRow, animationRow, loopRow, filenameRow],
+                viewer: [viewerTypeRow, animationRow, loopRow, colorRow, fovRow, tonemappingRow, bandsRow, filenameRow]
             }[exportType];
 
             allRows.forEach((r) => {
@@ -447,6 +477,9 @@ class ExportPopup extends Container {
             });
 
             bandsSlider.value = events.invoke('view.bands');
+
+            // tonemapping
+            tonemappingSelect.value = events.invoke('camera.tonemapping') || 'none';
 
             // ply
             compressBoolean.value = false;
@@ -483,6 +516,7 @@ class ExportPopup extends Container {
             // sog-package: settings rows visibility (default visible)
             colorRow.hidden = false;
             fovRow.hidden = false;
+            tonemappingRow.hidden = false;
             animationRow.hidden = false;
             loopRow.hidden = false;
             loopSelect.enabled = animationToggle.value;
@@ -600,7 +634,7 @@ class ExportPopup extends Container {
 
                 return {
                     version: 2,
-                    tonemapping: 'none',
+                    tonemapping: tonemappingSelect.value as ExperienceSettings['tonemapping'],
                     highPrecisionRendering: false,
                     background: { color: bgColor },
                     postEffectSettings: defaultPostEffectSettings,
@@ -649,12 +683,12 @@ class ExportPopup extends Container {
                     const pose = events.invoke('camera.getPose');
                     const name = removeKnownExtension(splatNames[0]);
 
-                    const cameraPosition: [number, number, number] = pose?.position
-                        ? [pose.position.x, pose.position.y, pose.position.z]
-                        : [0, 0, 0];
-                    const cameraTarget: [number, number, number] = pose?.target
-                        ? [pose.target.x, pose.target.y, pose.target.z]
-                        : [0, 0, 0];
+                    const cameraPosition: [number, number, number] = pose?.position ?
+                        [pose.position.x, pose.position.y, pose.position.z] :
+                        [0, 0, 0];
+                    const cameraTarget: [number, number, number] = pose?.target ?
+                        [pose.target.x, pose.target.y, pose.target.z] :
+                        [0, 0, 0];
 
                     console.log('🔵 [supersplat] 导出 sceneConfig 相机数据:');
                     console.log('  position:', cameraPosition);
@@ -676,7 +710,10 @@ class ExportPopup extends Container {
                                 eyeHeight: 1.3,
                                 position: cameraPosition,
                                 target: cameraTarget
-                            }
+                            },
+                            toneMapping: tonemappingSelect.value,
+                            animation: '',
+                            sceneType: 'indoor'
                         }
                     };
                 }
