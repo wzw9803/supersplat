@@ -65,10 +65,11 @@ const getMainFileName = (settings: SogSettings): string => {
  * CDN URLs are constructed manually from `UPLOAD_CONFIG.awsConfig.cdnHost` rather than
  * relying on `data.url` from the SDK callback (which returns a signed S3 direct-access URL).
  *
- * @param splats       - The splat data to serialize and upload.
- * @param sogSettings  - SOG export settings (from ExportPopup).
- * @param projectName  - User-provided project name.
- * @param onProgress   - Callback for phased progress updates.
+ * @param splats        - The splat data to serialize and upload.
+ * @param sogSettings   - SOG export settings (from ExportPopup).
+ * @param projectName   - User-provided project name.
+ * @param projectDetail - User-provided project description.
+ * @param onProgress    - Callback for phased progress updates.
  * @param cancelSignal - AbortSignal-like object; setting `aborted = true` cancels the
  *                       prepare phase. Upload/complete phases ignore it.
  * @param retrySignal  - Mutable ref object; set `fileName` to the name of a failed file
@@ -79,6 +80,7 @@ const uploadSogPackage = async (
     splats: Splat[],
     sogSettings: SogSettings,
     projectName: string,
+    projectDetail: string,
     onProgress?: ProgressCallback,
     cancelSignal?: { aborted: boolean },
     retrySignal?: { fileName: string | null }
@@ -336,7 +338,7 @@ const uploadSogPackage = async (
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sceneUrl })
+            body: JSON.stringify({ sceneUrl, projectName, projectDetail })
         });
 
         if (!response.ok) {

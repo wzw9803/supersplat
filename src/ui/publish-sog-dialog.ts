@@ -448,6 +448,7 @@ class PublishSogDialog extends Container {
                             splats,
                             sogSettings,
                             projectName,
+                            this._descInput.value.trim(),
                             onProgress,
                             this._cancelSignal,
                             this._retrySignal
