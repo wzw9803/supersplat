@@ -11,6 +11,7 @@ import { initFileHandler } from './file-handler';
 import { registerIframeApi } from './iframe-api';
 import { registerPlySequenceEvents } from './ply-sequence';
 import { registerPublishEvents } from './publish';
+import { mergeWindowConfig } from './utils/config';
 import { registerRenderEvents } from './render';
 import { Scene } from './scene';
 import { getSceneConfig } from './scene-config';
@@ -76,6 +77,9 @@ const getURLArgs = () => {
 };
 
 const main = async () => {
+    // 合并 window.__SUPERSPLAT_CONFIG__ 配置（必须最早执行）
+    mergeWindowConfig();
+
     // root events object
     const events = new Events();
 
@@ -284,6 +288,16 @@ const main = async () => {
                 }]);
             }
         });
+    }
+
+    // Service Worker 注册（仅当 BUILD_SW 环境变量为 true 时）
+    // @rollup/plugin-replace 在构建时替换 process.env.BUILD_SW 为实际值
+    if (process.env.BUILD_SW) {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js')
+                .then(reg => console.log('service worker registered', reg))
+                .catch(err => console.log('failed to register service worker', err));
+        }
     }
 };
 
