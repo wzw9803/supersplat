@@ -5,6 +5,7 @@ import commonjs from '@rollup/plugin-commonjs';
 import image from '@rollup/plugin-image';
 import json from '@rollup/plugin-json';
 import resolve from '@rollup/plugin-node-resolve';
+import replace from '@rollup/plugin-replace';
 import strip from '@rollup/plugin-strip';
 import terser from '@rollup/plugin-terser';
 import typescript from '@rollup/plugin-typescript';
@@ -21,6 +22,7 @@ if (process.env.BUILD_TYPE === 'prod') {
 }
 // debug, profile, release
 const BUILD_TYPE = process.env.BUILD_TYPE || 'release';
+const BUILD_SW = process.env.BUILD_SW === 'true';
 const ENGINE_DIR = path.resolve(`node_modules/playcanvas/build/playcanvas${BUILD_TYPE === 'debug' ? '.dbg' : ''}/src/index.js`);
 const PCUI_DIR = path.resolve('node_modules/@playcanvas/pcui');
 const HREF = process.env.BASE_HREF || '';
@@ -94,6 +96,10 @@ const application = {
             includePaths: [`${PCUI_DIR}/dist`],
             watch: 'src/ui/scss'
         }),
+        replace({
+            preventAssignment: true,
+            'process.env.BUILD_SW': JSON.stringify(BUILD_SW),
+        }),
         BUILD_TYPE === 'release' &&
         strip({
             include: ['**/*.ts'],
@@ -105,7 +111,7 @@ const application = {
     cache: false
 };
 
-const serviceWorker = {
+const serviceWorker = BUILD_SW ? [{
     input: 'src/sw.ts',
     output: {
         dir: 'dist',
@@ -120,9 +126,9 @@ const serviceWorker = {
     ],
     treeshake: 'smallest',
     cache: false
-};
+}] : [];
 
 export default [
     application,
-    serviceWorker
+    ...serviceWorker
 ];

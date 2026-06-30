@@ -14,12 +14,14 @@
     "license": "MIT",
     "main": "index.js",
     "scripts": {
-        "build": "rollup -c",
+        "build": "rm -rf dist && rollup -c",
         "watch": "rollup -c -w",
         "serve": "serve dist -C --ssl-cert certs/cert.pem --ssl-key certs/key.pem",
         "serve:http": "serve dist -C",
         "develop": "cross-env BUILD_TYPE=debug concurrently --kill-others \"npm run watch\" \"npm run serve\"",
         "develop:auto-launch": "concurrently --kill-others \"xdg-open 'https://localhost:3000/'\" \"npm run watch\" \"npm run serve\"",
+        "copy-to-vortex": "bash copy-to-vortex.sh",
+        "build:vortex": "BUILD_TYPE=release BUILD_SW=true npm run build && npm run copy-to-vortex",
         "lint": "eslint src"
     },
     "engines": {
@@ -35,6 +37,7 @@
         "@rollup/plugin-image": "3.0.3",
         "@rollup/plugin-json": "6.1.0",
         "@rollup/plugin-node-resolve": "16.0.3",
+        "@rollup/plugin-replace": "^6.0.3",
         "@rollup/plugin-strip": "3.0.4",
         "@rollup/plugin-terser": "1.0.0",
         "@rollup/plugin-typescript": "12.3.0",
