@@ -252,6 +252,7 @@
     "popup.publish-sog.success": "发布成功！",
     "popup.publish-sog.share-link": "分享链接",
     "popup.publish-sog.copy-link": "复制",
+    "popup.publish-sog.goto": "跳转",
     "popup.publish-sog.retry": "重试",
     "popup.publish-sog.failed": "上传失败",
     "popup.publish-sog.copy-success": "已复制!",

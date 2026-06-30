@@ -62,6 +62,7 @@ class PublishSogDialog extends Container {
     private _linkInput: TextInput;
     private _copyButton: Button;
     private _closeButton: Button;
+    private _gotoButton: Button;
 
     // Reusable cancel button (changes behaviour per phase)
     private _phaseCancelButton: Button;
@@ -187,12 +188,14 @@ class PublishSogDialog extends Container {
         // Buttons for RESULT state
         this._closeButton = new Button({ class: 'button', text: localize('popup.publish-sog.close'), hidden: true });
         this._copyButton = new Button({ class: 'button', text: localize('popup.publish-sog.copy-link'), hidden: true });
+        this._gotoButton = new Button({ class: 'button', text: localize('popup.publish-sog.goto'), hidden: true });
 
         footer.append(this._cancelButton);
         footer.append(this._confirmButton);
         footer.append(this._phaseCancelButton);
         footer.append(this._closeButton);
         footer.append(this._copyButton);
+        footer.append(this._gotoButton);
 
         dialog.append(footer);
         this.append(dialog);
@@ -216,6 +219,7 @@ class PublishSogDialog extends Container {
             this._phaseCancelButton.hidden = isInput || isResult;
             this._closeButton.hidden = !isResult;
             this._copyButton.hidden = !isResult;
+            this._gotoButton.hidden = !isResult;
 
             // Cancel button enabled only in PREPARE phase
             this._phaseCancelButton.enabled = phase === PublishPhase.PREPARE;
@@ -264,6 +268,12 @@ class PublishSogDialog extends Container {
             }).catch(() => {
                 // ignore clipboard errors
             });
+        });
+
+        // ---- Goto button ----
+        this._gotoButton.on('click', () => {
+            const url = this._linkInput.value;
+            if (url) window.open(url, '_blank');
         });
 
         // ---- Name input validation ----
