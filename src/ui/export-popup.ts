@@ -707,9 +707,9 @@ class ExportPopup extends Container {
                         config: {
                             camera: {
                                 fov,
-                                eyeHeight: 1.3,
-                                position: cameraPosition,
-                                target: cameraTarget
+                                eyeHeight: 1.35,
+                                position: [cameraPosition[0], 1.35, cameraPosition[2]],
+                                target: [cameraTarget[0], 1.35, cameraTarget[2]]
                             },
                             toneMapping: tonemappingSelect.value,
                             animation: '',
