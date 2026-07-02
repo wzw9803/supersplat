@@ -74,6 +74,7 @@ const getMainFileName = (settings: SogSettings): string => {
  *                       prepare phase. Upload/complete phases ignore it.
  * @param retrySignal  - Mutable ref object; set `fileName` to the name of a failed file
  *                       to trigger a retry via `KeUpload.retry()`.
+ * @param prebuiltFiles - Optional pre-built files from cache, skipping serialization.
  * @returns PublishResult with shareId and shareUrl.
  */
 const uploadSogPackage = async (
@@ -83,22 +84,31 @@ const uploadSogPackage = async (
     projectDetail: string,
     onProgress?: ProgressCallback,
     cancelSignal?: { aborted: boolean },
-    retrySignal?: { fileName: string | null }
+    retrySignal?: { fileName: string | null },
+    prebuiltFiles?: Array<{ name: string; data: Uint8Array }>
 ): Promise<PublishResult> => {
     // ---- Phase 1: Prepare files ----
-    onProgress?.({ phase: 'prepare', prepareProgress: 0 });
-
-    // Progress callback that bridges serializeSogToFiles' progress to our PublishProgress
-    const prepareProgressCb = (_phase: string, progress: number) => {
-        onProgress?.({ phase: 'prepare', prepareProgress: progress });
-    };
-
     let files: Array<{ name: string; data: Uint8Array }>;
-    try {
-        files = await serializeSogToFiles(splats, sogSettings, cancelSignal, prepareProgressCb);
-    } catch (err) {
-        // Re-throw cancellation / serialization errors so the dialog can handle them
-        throw err;
+
+    if (prebuiltFiles && prebuiltFiles.length > 0) {
+        // Fast path: use cached source files, skip extractDataTable + writeSogInternal
+        onProgress?.({ phase: 'prepare', prepareProgress: 100 });
+        files = prebuiltFiles;
+    } else {
+        // Normal path: serialize from GSplatData
+        onProgress?.({ phase: 'prepare', prepareProgress: 0 });
+
+        // Progress callback that bridges serializeSogToFiles' progress to our PublishProgress
+        const prepareProgressCb = (_phase: string, progress: number) => {
+            onProgress?.({ phase: 'prepare', prepareProgress: progress });
+        };
+
+        try {
+            files = await serializeSogToFiles(splats, sogSettings, cancelSignal, prepareProgressCb);
+        } catch (err) {
+            // Re-throw cancellation / serialization errors so the dialog can handle them
+            throw err;
+        }
     }
 
     if (!files || files.length === 0) {

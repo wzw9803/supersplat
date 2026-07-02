@@ -6,6 +6,7 @@ import { Events } from '../events';
 import { ExportType, SceneExportOptions } from '../file-handler';
 import { AnimTrack, ExperienceSettings, defaultPostEffectSettings } from '../splat-serialize';
 import sceneExport from './svg/export.svg';
+import { getSourceCache } from '../sog-source-cache';
 
 const createSvg = (svgString: string, args = {}) => {
     const decodedStr = decodeURIComponent(svgString.substring('data:image/svg+xml,'.length));
@@ -490,7 +491,16 @@ class ExportPopup extends Container {
             // sog-package
             minOpacitySlider.value = 1 / 255;
             removeInvalidToggle.value = true;
-            sogFormatSelect.value = 'unbundled';
+            // Auto-detect sogFormat from cached source files (fast publish optimization)
+            {
+                const splats = events.invoke('scene.splats');
+                if (splats && splats.length === 1) {
+                    const sourceCache = getSourceCache(splats[0]);
+                    sogFormatSelect.value = sourceCache ? sourceCache.format : 'unbundled';
+                } else {
+                    sogFormatSelect.value = 'unbundled';
+                }
+            }
             includeSettingsToggle.value = true;
 
             // filename

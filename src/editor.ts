@@ -9,6 +9,7 @@ import { MappedReadFileSystem } from './io';
 import { Scene } from './scene';
 import { Splat } from './splat';
 import { serializePly } from './splat-serialize';
+import { clearSourceCache, evictSplat } from './sog-source-cache';
 
 const removeExtension = (filename: string) => {
     return filename.substring(0, filename.length - path.getExtension(filename).length);
@@ -54,12 +55,14 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         scene.clear();
         editHistory.clear();
         lastExportCursor = 0;
+        clearSourceCache();
     });
 
     // When a splat is removed from the scene, remove all edit operations that reference it
     events.on('scene.elementRemoved', (element: Element) => {
         if (element.type === ElementType.splat) {
             editHistory.removeForSplat(element as Splat);
+            evictSplat(element as Splat);
         }
     });
 

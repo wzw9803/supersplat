@@ -3,6 +3,7 @@ import { Events } from '../events';
 import { localize } from './localization';
 import { SogSettings } from '../splat-serialize';
 import { uploadSogPackage, PublishProgress, PublishResult, UploadFileState } from '../sog-upload';
+import { canSkipSerialize, buildFilesFromCache } from '../sog-source-cache';
 
 type DialogPublishResult = {
     shareId: string;
@@ -396,6 +397,25 @@ class PublishSogDialog extends Container {
                     this._cancelSignal = { aborted: false };
                     this._retrySignal = { fileName: null };
 
+                    // Fast path: if scene is unmodified and source files are cached SOG,
+                    // skip extractDataTable + writeSogInternal entirely.
+                    const targetFormat = (sogSettings as any).sogFormat || 'unbundled';
+                    const sceneDirty = events.invoke('scene.dirty');
+                    let prebuiltFiles: Array<{ name: string; data: Uint8Array }> | undefined;
+
+                    if (!sceneDirty && canSkipSerialize(splats)) {
+                        try {
+                            prebuiltFiles = await buildFilesFromCache(
+                                splats,
+                                sogSettings.sceneConfig,
+                                targetFormat
+                            );
+                        } catch (err) {
+                            console.warn('[publish] Cache build failed, fallback to serialization:', err);
+                            prebuiltFiles = undefined;
+                        }
+                    }
+
                     // Yield to the browser so the PREPARE UI renders before
                     // serializeSogToFiles blocks the main thread
                     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -451,7 +471,8 @@ class PublishSogDialog extends Container {
                             this._descInput.value.trim(),
                             onProgress,
                             this._cancelSignal,
-                            this._retrySignal
+                            this._retrySignal,
+                            prebuiltFiles
                         );
 
                         this._cancelSignal = undefined;

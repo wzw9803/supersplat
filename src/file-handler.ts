@@ -8,6 +8,7 @@ import { Scene } from './scene';
 import { Splat } from './splat';
 import { serializePly, serializePlyCompressed, SerializeSettings, serializeSog, serializeSplat, serializeViewer, SogSettings, ViewerExportSettings } from './splat-serialize';
 import { localize } from './ui/localization';
+import { cacheSourceFile } from './sog-source-cache';
 
 // ts compiler and vscode find this type, but eslint does not
 type FilePickerAcceptType = unknown;
@@ -340,7 +341,13 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 }
             }
             const model = await importSplatModel(files, animationFrame);
-            if (model) result.push(model);
+            if (model) {
+                result.push(model);
+                // Cache SOG source files for fast publish path
+                if (isSog(filenames)) {
+                    cacheSourceFile(model, files.map(f => ({ name: f.filename, data: f.contents! })), 'unbundled');
+                }
+            }
         } else {
             // check for unrecognized file types
             for (let i = 0; i < filenames.length; i++) {
@@ -361,7 +368,13 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 } else if (['.ply', '.splat', '.sog', '.ksplat', '.spz'].some(ext => filename.endsWith(ext))) {
                     // load gaussian splat model
                     const model = await importSplatModel([files[i]], animationFrame);
-                    if (model) result.push(model);
+                    if (model) {
+                        result.push(model);
+                        // Cache .sog bundled file for fast publish path
+                        if (filename.endsWith('.sog')) {
+                            cacheSourceFile(model, [{ name: files[i].filename, data: files[i].contents! }], 'bundled');
+                        }
+                    }
                 } else if (filename.endsWith('images.txt')) {
                     // load colmap frames
                     await loadImagesTxt(files[i], events);
