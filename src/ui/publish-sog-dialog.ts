@@ -29,6 +29,7 @@ class PublishSogDialog extends Container {
     private _descInput: TextAreaInput;
     private _confirmButton: Button;
     private _cancelButton: Button;
+    private _dirtyIndicator: Label;
 
     // Phase state
     private _contentPhases: Container;
@@ -112,6 +113,11 @@ class PublishSogDialog extends Container {
 
         this._contentInput.append(nameRow);
         this._contentInput.append(descRow);
+
+        // Scene dirty status indicator (read-only, reflects fast-path eligibility)
+        this._dirtyIndicator = new Label({ class: 'label', text: '' });
+        this._contentInput.append(this._dirtyIndicator);
+
         dialog.append(this._contentInput);
 
         // ---- Phase content (checklist UI) ----
@@ -343,6 +349,20 @@ class PublishSogDialog extends Container {
             setPhaseState(PublishPhase.INPUT);
             this.hidden = false;
             this.dom.focus();
+
+            // Update scene dirty indicator
+            const dirty = events.invoke('scene.dirty');
+            const splats = events.invoke('scene.splats');
+            const hasCache = splats && splats.length === 1 && canSkipSerialize(splats);
+            if (!dirty && hasCache) {
+                this._dirtyIndicator.text = '⚡ 场景未修改 · 将使用快速通道（跳过序列化）';
+            } else if (dirty) {
+                this._dirtyIndicator.text = '🔧 场景已修改 · 需要重新序列化';
+            } else if (!hasCache) {
+                this._dirtyIndicator.text = '📦 无 SOG 缓存 · 需要重新序列化';
+            } else {
+                this._dirtyIndicator.text = '🔄 需要重新序列化';
+            }
 
             // Reset per-show mutable state
             this._publishResult = null;
