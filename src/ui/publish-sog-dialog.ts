@@ -3,7 +3,7 @@ import { Events } from '../events';
 import { localize } from './localization';
 import { SogSettings } from '../splat-serialize';
 import { uploadSogPackage, PublishProgress, PublishResult, UploadFileState } from '../sog-upload';
-import { canSkipSerialize, buildFilesFromCache } from '../sog-source-cache';
+import { canSkipSerialize, buildFilesFromCache, isDataClean, areExportOptionsDefault, getSourceCache } from '../sog-source-cache';
 
 type DialogPublishResult = {
     shareId: string;
@@ -350,16 +350,17 @@ class PublishSogDialog extends Container {
             this.hidden = false;
             this.dom.focus();
 
-            // Update scene dirty indicator
-            const dirty = events.invoke('scene.dirty');
+            // Update fast path eligibility indicator
             const splats = events.invoke('scene.splats');
-            const hasCache = splats && splats.length === 1 && canSkipSerialize(splats);
-            if (!dirty && hasCache) {
-                this._dirtyIndicator.text = '⚡ 场景未修改 · 将使用快速通道（跳过序列化）';
-            } else if (dirty) {
-                this._dirtyIndicator.text = '🔧 场景已修改 · 需要重新序列化';
-            } else if (!hasCache) {
+            const canFastPath = splats && splats.length === 1 && canSkipSerialize(splats, sogSettings, sogSettings.iterations);
+            if (canFastPath) {
+                this._dirtyIndicator.text = '⚡ 数据未修改 · 将使用快速通道（跳过序列化）';
+            } else if (splats && splats.length === 1 && !getSourceCache(splats[0])) {
                 this._dirtyIndicator.text = '📦 无 SOG 缓存 · 需要重新序列化';
+            } else if (splats && splats.length === 1 && !isDataClean(splats[0])) {
+                this._dirtyIndicator.text = '🔧 高斯数据已修改 · 需要重新序列化';
+            } else if (splats && splats.length === 1 && !areExportOptionsDefault(sogSettings, sogSettings.iterations)) {
+                this._dirtyIndicator.text = '⚙️ 导出选项非默认值 · 需要重新序列化';
             } else {
                 this._dirtyIndicator.text = '🔄 需要重新序列化';
             }
@@ -417,13 +418,12 @@ class PublishSogDialog extends Container {
                     this._cancelSignal = { aborted: false };
                     this._retrySignal = { fileName: null };
 
-                    // Fast path: if scene is unmodified and source files are cached SOG,
-                    // skip extractDataTable + writeSogInternal entirely.
+                    // Fast path: skip extractDataTable + writeSogInternal if data is
+                    // unchanged and export options are at their defaults.
                     const targetFormat = (sogSettings as any).sogFormat || 'unbundled';
-                    const sceneDirty = events.invoke('scene.dirty');
                     let prebuiltFiles: Array<{ name: string; data: Uint8Array }> | undefined;
 
-                    if (!sceneDirty && canSkipSerialize(splats)) {
+                    if (canSkipSerialize(splats, sogSettings, sogSettings.iterations)) {
                         try {
                             prebuiltFiles = await buildFilesFromCache(
                                 splats,

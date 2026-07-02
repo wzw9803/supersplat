@@ -8,7 +8,7 @@ import { Scene } from './scene';
 import { Splat } from './splat';
 import { serializePly, serializePlyCompressed, SerializeSettings, serializeSog, serializeSplat, serializeViewer, SogSettings, ViewerExportSettings } from './splat-serialize';
 import { localize } from './ui/localization';
-import { cacheSourceFile } from './sog-source-cache';
+import { cacheSourceFile, captureFingerprint } from './sog-source-cache';
 
 // ts compiler and vscode find this type, but eslint does not
 type FilePickerAcceptType = unknown;
@@ -343,9 +343,10 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
             const model = await importSplatModel(files, animationFrame);
             if (model) {
                 result.push(model);
-                // Cache SOG source files for fast publish path
+                // Cache SOG source files and capture fingerprint for fast publish path
                 if (isSog(filenames)) {
                     cacheSourceFile(model, files.map(f => ({ name: f.filename, data: f.contents! })), 'unbundled');
+                    captureFingerprint(model);
                 }
             }
         } else {
@@ -370,9 +371,10 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                     const model = await importSplatModel([files[i]], animationFrame);
                     if (model) {
                         result.push(model);
-                        // Cache .sog bundled file for fast publish path
+                        // Cache .sog bundled file and capture fingerprint for fast publish path
                         if (filename.endsWith('.sog')) {
                             cacheSourceFile(model, [{ name: files[i].filename, data: files[i].contents! }], 'bundled');
+                            captureFingerprint(model);
                         }
                     }
                 } else if (filename.endsWith('images.txt')) {

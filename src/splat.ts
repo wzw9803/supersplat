@@ -71,6 +71,8 @@ class Splat extends Element {
     _whitePoint = 1;
     _transparency = 1;
 
+    _transformPaletteVersion = 0;
+
     measurePoints: Vec3[] = [];
     measureSelection = -1;
 

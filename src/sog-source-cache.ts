@@ -1,6 +1,8 @@
 import { MemoryFileSystem, ZipFileSystem, ZipReadFileSystem } from '@playcanvas/splat-transform';
 import { BlobReadSource } from './io/read/file-systems';
 import { Splat } from './splat';
+import { State } from './splat-state';
+import { SerializeSettings } from './splat-serialize';
 
 type SogSourceFormat = 'bundled' | 'unbundled';
 
@@ -13,6 +15,23 @@ interface SogSourceCacheEntry {
 
 // Module-level cache: splat.uid → cache entry
 const cache = new Map<number, SogSourceCacheEntry>();
+
+// Data fingerprint captured at import time, used to detect changes that require re-serialization.
+interface SplatFingerprint {
+    transformPaletteVersion: number;
+    localPosition: [number, number, number];
+    localRotation: [number, number, number, number];
+    localScale: [number, number, number];
+    tintClr: [number, number, number];
+    temperature: number;
+    saturation: number;
+    brightness: number;
+    blackPoint: number;
+    whitePoint: number;
+    transparency: number;
+}
+
+const fingerprintCache = new Map<number, SplatFingerprint>();
 
 const cacheSourceFile = (
     splat: Splat,
@@ -32,11 +51,115 @@ const evictSplat = (splat: Splat): void => {
 
 const clearSourceCache = (): void => {
     cache.clear();
+    fingerprintCache.clear();
 };
 
-const canSkipSerialize = (splats: Splat[]): boolean => {
+const evictFingerprint = (splat: Splat): void => {
+    fingerprintCache.delete(splat.uid);
+};
+
+/**
+ * Capture the current data state of a splat as a fingerprint.
+ * Called at import time after caching source files.
+ */
+const captureFingerprint = (splat: Splat): void => {
+    const pos = splat.entity.getLocalPosition();
+    const rot = splat.entity.getLocalRotation();
+    const scl = splat.entity.getLocalScale();
+    fingerprintCache.set(splat.uid, {
+        transformPaletteVersion: splat._transformPaletteVersion ?? 0,
+        localPosition: [pos.x, pos.y, pos.z],
+        localRotation: [rot.x, rot.y, rot.z, rot.w],
+        localScale: [scl.x, scl.y, scl.z],
+        tintClr: [splat.tintClr.r, splat.tintClr.g, splat.tintClr.b],
+        temperature: splat.temperature,
+        saturation: splat.saturation,
+        brightness: splat.brightness,
+        blackPoint: splat.blackPoint,
+        whitePoint: splat.whitePoint,
+        transparency: splat.transparency
+    });
+};
+
+/**
+ * Check if the splat's current data state matches the import-time fingerprint.
+ * Uses value comparison for entity transform and color params (O(1)),
+ * version counter for transform palette (O(1)),
+ * and Uint8Array scan for deleted gaussians (O(n) with early exit).
+ */
+const isDataClean = (splat: Splat): boolean => {
+    const fp = fingerprintCache.get(splat.uid);
+    if (!fp) return false;
+
+    // Scan state array for deleted bits (SOG imports always start with all zeros).
+    // Early-exit on first non-zero deleted bit.
+    const state = splat.splatData.getProp('state') as Uint8Array;
+    if (state) {
+        for (let i = 0; i < state.length; i++) {
+            if ((state[i] & State.deleted) !== 0) return false;
+        }
+    }
+
+    // Transform palette version (tracked by SplatsTransformOp)
+    if ((splat._transformPaletteVersion ?? 0) !== fp.transformPaletteVersion) return false;
+
+    // Entity transform value comparison
+    const pos = splat.entity.getLocalPosition();
+    const rot = splat.entity.getLocalRotation();
+    const scl = splat.entity.getLocalScale();
+    if (pos.x !== fp.localPosition[0] || pos.y !== fp.localPosition[1] || pos.z !== fp.localPosition[2]) return false;
+    if (rot.x !== fp.localRotation[0] || rot.y !== fp.localRotation[1] ||
+        rot.z !== fp.localRotation[2] || rot.w !== fp.localRotation[3]) return false;
+    if (scl.x !== fp.localScale[0] || scl.y !== fp.localScale[1] || scl.z !== fp.localScale[2]) return false;
+
+    // Color adjustment value comparison
+    if (splat.tintClr.r !== fp.tintClr[0] || splat.tintClr.g !== fp.tintClr[1] || splat.tintClr.b !== fp.tintClr[2]) return false;
+    if (splat.temperature !== fp.temperature) return false;
+    if (splat.saturation !== fp.saturation) return false;
+    if (splat.brightness !== fp.brightness) return false;
+    if (splat.blackPoint !== fp.blackPoint) return false;
+    if (splat.whitePoint !== fp.whitePoint) return false;
+    if (splat.transparency !== fp.transparency) return false;
+
+    return true;
+};
+
+const SOG_DEFAULT_MAX_SH_BANDS = 3;
+const SOG_DEFAULT_MIN_OPACITY = 0.004;
+const SOG_DEFAULT_REMOVE_INVALID = true;
+const SOG_DEFAULT_ITERATIONS = 10;
+
+/**
+ * Check whether all export options that affect SOG data content are at their defaults.
+ * Non-default options mean the user expects output that differs from the cached source.
+ */
+const areExportOptionsDefault = (
+    serializeSettings?: SerializeSettings,
+    iterations?: number
+): boolean => {
+    return (
+        (serializeSettings?.maxSHBands ?? SOG_DEFAULT_MAX_SH_BANDS) === SOG_DEFAULT_MAX_SH_BANDS &&
+        (serializeSettings?.minOpacity ?? SOG_DEFAULT_MIN_OPACITY) === SOG_DEFAULT_MIN_OPACITY &&
+        (serializeSettings?.removeInvalid ?? SOG_DEFAULT_REMOVE_INVALID) === SOG_DEFAULT_REMOVE_INVALID &&
+        (iterations ?? SOG_DEFAULT_ITERATIONS) === SOG_DEFAULT_ITERATIONS
+    );
+};
+
+/**
+ * Determine whether the fast publish path can be used.
+ * Conditions: single splat, cached SOG source, data unchanged, export options at defaults.
+ */
+const canSkipSerialize = (
+    splats: Splat[],
+    serializeSettings?: SerializeSettings,
+    iterations?: number
+): boolean => {
     if (splats.length !== 1) return false;
-    return cache.has(splats[0].uid);
+    const splat = splats[0];
+    if (!cache.has(splat.uid)) return false;
+    if (!isDataClean(splat)) return false;
+    if (!areExportOptionsDefault(serializeSettings, iterations)) return false;
+    return true;
 };
 
 /**
@@ -152,10 +275,15 @@ const buildFilesFromCache = async (
 export {
     SogSourceFormat,
     SogSourceCacheEntry,
+    SplatFingerprint,
     cacheSourceFile,
     getSourceCache,
     evictSplat,
+    evictFingerprint,
     clearSourceCache,
+    captureFingerprint,
+    isDataClean,
+    areExportOptionsDefault,
     canSkipSerialize,
     buildFilesFromCache
 };

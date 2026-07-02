@@ -239,6 +239,8 @@ class SplatsTransformOp {
         });
 
         await splat.updatePositions();
+
+        this.splat._transformPaletteVersion++;
     }
 
     async undo() {
@@ -264,6 +266,8 @@ class SplatsTransformOp {
         splat.transformPalette.free(paletteMap.size);
 
         await splat.updatePositions();
+
+        this.splat._transformPaletteVersion--;
     }
 
     destroy() {

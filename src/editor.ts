@@ -9,7 +9,7 @@ import { MappedReadFileSystem } from './io';
 import { Scene } from './scene';
 import { Splat } from './splat';
 import { serializePly } from './splat-serialize';
-import { clearSourceCache, evictSplat } from './sog-source-cache';
+import { clearSourceCache, evictSplat, evictFingerprint } from './sog-source-cache';
 
 const removeExtension = (filename: string) => {
     return filename.substring(0, filename.length - path.getExtension(filename).length);
@@ -63,6 +63,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
         if (element.type === ElementType.splat) {
             editHistory.removeForSplat(element as Splat);
             evictSplat(element as Splat);
+            evictFingerprint(element as Splat);
         }
     });
 
