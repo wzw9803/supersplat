@@ -496,9 +496,16 @@ class ExportPopup extends Container {
                 const splats = events.invoke('scene.splats');
                 if (splats && splats.length === 1) {
                     const sourceCache = getSourceCache(splats[0]);
-                    sogFormatSelect.value = sourceCache ? sourceCache.format : 'unbundled';
+                    if (sourceCache) {
+                        sogFormatSelect.value = sourceCache.format;
+                        sogFormatSelect.enabled = false;
+                    } else {
+                        sogFormatSelect.value = 'unbundled';
+                        sogFormatSelect.enabled = true;
+                    }
                 } else {
                     sogFormatSelect.value = 'unbundled';
+                    sogFormatSelect.enabled = true;
                 }
             }
             includeSettingsToggle.value = true;
