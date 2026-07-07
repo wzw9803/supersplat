@@ -8,6 +8,7 @@ import { canSkipSerialize, buildFilesFromCache, isDataClean, areExportOptionsDef
 type DialogPublishResult = {
     shareId: string;
     shareUrl: string;
+    onlineShareUrl: string;
 };
 
 enum PublishPhase {
@@ -26,6 +27,7 @@ class PublishSogDialog extends Container {
     // Input state
     private _contentInput: Container;
     private _nameInput: TextInput;
+    private _ownerInput: TextInput;
     private _descInput: TextAreaInput;
     private _confirmButton: Button;
     private _cancelButton: Button;
@@ -62,9 +64,11 @@ class PublishSogDialog extends Container {
     private _resultInfo: Container;
     private _resultLabel: Label;
     private _linkInput: TextInput;
+    private _linkInput2: TextInput;
     private _copyButton: Button;
     private _closeButton: Button;
     private _gotoButton: Button;
+    private _gotoButton2: Button;
 
     // Reusable cancel button (changes behaviour per phase)
     private _phaseCancelButton: Button;
@@ -111,7 +115,14 @@ class PublishSogDialog extends Container {
         descRow.append(descLabel);
         descRow.append(this._descInput);
 
+        const ownerRow = new Container({ class: 'row' });
+        const ownerLabel = new Label({ class: 'label', text: localize('popup.publish-sog.owner') });
+        this._ownerInput = new TextInput({ class: 'text-input' });
+        ownerRow.append(ownerLabel);
+        ownerRow.append(this._ownerInput);
+
         this._contentInput.append(nameRow);
+        this._contentInput.append(ownerRow);
         this._contentInput.append(descRow);
 
         // Scene dirty status indicator (read-only, reflects fast-path eligibility)
@@ -173,12 +184,18 @@ class PublishSogDialog extends Container {
         this._resultInfo = new Container({ class: 'result-container' });
         this._resultLabel = new Label({ class: 'result-label', text: localize('popup.publish-sog.success') });
         const linkRow = new Container({ class: 'link-row' });
-        const linkLabelTitle = new Label({ class: 'label', text: localize('popup.publish-sog.share-link') });
+        const linkLabelTitle = new Label({ class: 'label', text: localize('popup.publish-sog.internal-link') });
         this._linkInput = new TextInput({ class: 'share-link-input' });
         linkRow.append(linkLabelTitle);
         linkRow.append(this._linkInput);
+        const linkRow2 = new Container({ class: 'link-row' });
+        const linkLabelTitle2 = new Label({ class: 'label', text: localize('popup.publish-sog.external-link') });
+        this._linkInput2 = new TextInput({ class: 'share-link-input' });
+        linkRow2.append(linkLabelTitle2);
+        linkRow2.append(this._linkInput2);
         this._resultInfo.append(this._resultLabel);
         this._resultInfo.append(linkRow);
+        this._resultInfo.append(linkRow2);
         this._contentPhases.append(this._resultInfo);
         dialog.append(this._contentPhases);
 
@@ -196,6 +213,7 @@ class PublishSogDialog extends Container {
         this._closeButton = new Button({ class: 'button', text: localize('popup.publish-sog.close'), hidden: true });
         this._copyButton = new Button({ class: 'button', text: localize('popup.publish-sog.copy-link'), hidden: true });
         this._gotoButton = new Button({ class: 'button', text: localize('popup.publish-sog.goto'), hidden: true });
+        this._gotoButton2 = new Button({ class: 'button', text: localize('popup.publish-sog.goto-external'), hidden: true });
 
         footer.append(this._cancelButton);
         footer.append(this._confirmButton);
@@ -203,6 +221,7 @@ class PublishSogDialog extends Container {
         footer.append(this._closeButton);
         footer.append(this._copyButton);
         footer.append(this._gotoButton);
+        footer.append(this._gotoButton2);
 
         dialog.append(footer);
         this.append(dialog);
@@ -227,6 +246,7 @@ class PublishSogDialog extends Container {
             this._closeButton.hidden = !isResult;
             this._copyButton.hidden = !isResult;
             this._gotoButton.hidden = !isResult;
+            this._gotoButton2.hidden = !isResult;
 
             // Cancel button enabled only in PREPARE phase
             this._phaseCancelButton.enabled = phase === PublishPhase.PREPARE;
@@ -264,9 +284,12 @@ class PublishSogDialog extends Container {
 
         // ---- Copy button ----
         this._copyButton.on('click', () => {
-            const url = this._linkInput.value;
-            if (!url) return;
-            navigator.clipboard.writeText(url).then(() => {
+            const internalUrl = this._linkInput.value;
+            const externalUrl = this._linkInput2.value;
+            if (!internalUrl && !externalUrl) return;
+            const noLink = localize('popup.publish-sog.no-external-link');
+            const text = `内网链接：${internalUrl || noLink}\n外网链接：${externalUrl || noLink}`;
+            navigator.clipboard.writeText(text).then(() => {
                 const orig = this._copyButton.text;
                 this._copyButton.text = localize('popup.publish-sog.copy-success');
                 setTimeout(() => {
@@ -277,16 +300,23 @@ class PublishSogDialog extends Container {
             });
         });
 
-        // ---- Goto button ----
+        // ---- Goto buttons ----
         this._gotoButton.on('click', () => {
             const url = this._linkInput.value;
             if (url) window.open(url, '_blank');
         });
 
-        // ---- Name input validation ----
-        this._nameInput.on('change', () => {
-            this._confirmButton.disabled = !this._nameInput.value.trim();
+        this._gotoButton2.on('click', () => {
+            const url = this._linkInput2.value;
+            if (url) window.open(url, '_blank');
         });
+
+        // ---- Form validation (name + owner required) ----
+        const validateForm = () => {
+            this._confirmButton.disabled = !this._nameInput.value.trim() || !this._ownerInput.value.trim();
+        };
+        this._nameInput.on('change', validateForm);
+        this._ownerInput.on('change', validateForm);
 
         // ---- Button handlers (registered once) ----
         // Each handler reads this._resolve / this._publishResult which are
@@ -328,9 +358,11 @@ class PublishSogDialog extends Container {
         this.show = (sogSettings: SogSettings) => {
             // Reset UI
             this._nameInput.value = '';
+            this._ownerInput.value = '';
             this._descInput.value = '';
             this._confirmButton.disabled = true;
             this._linkInput.value = '';
+            this._linkInput2.value = '';
             this._prepareProgress.value = 0;
             this._uploadProgress.value = 0;
             this._completeProgress.value = 0;
@@ -402,7 +434,8 @@ class PublishSogDialog extends Container {
                 // ---- Confirm publish handler (reassigned each show()) ----
                 this._onConfirm = async () => {
                     const projectName = this._nameInput.value.trim();
-                    if (!projectName) {
+                    const owner = this._ownerInput.value.trim();
+                    if (!projectName || !owner) {
                         this._confirmButton.disabled = true;
                         return;
                     }
@@ -489,6 +522,7 @@ class PublishSogDialog extends Container {
                             sogSettings,
                             projectName,
                             this._descInput.value.trim(),
+                            owner,
                             onProgress,
                             this._cancelSignal,
                             this._retrySignal,
@@ -501,8 +535,10 @@ class PublishSogDialog extends Container {
                         this._completeStatus.text = localize('popup.publish-sog.status-done');
                         this._completeProgress.value = 100;
 
-                        this._publishResult = { shareId: result.shareId, shareUrl: result.shareUrl };
-                        this._linkInput.value = result.shareUrl;
+                        this._publishResult = { shareId: result.shareId, shareUrl: result.shareUrl, onlineShareUrl: result.onlineShareUrl };
+                        this._linkInput.value = result.shareUrl || localize('popup.publish-sog.no-external-link');
+                        this._linkInput2.value = result.onlineShareUrl || localize('popup.publish-sog.no-external-link');
+                        this._gotoButton2.enabled = !!result.onlineShareUrl;
                         setPhaseState(PublishPhase.RESULT);
                     } catch (err) {
                         const msg = err instanceof Error ? err.message : String(err);

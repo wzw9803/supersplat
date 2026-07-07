@@ -26,6 +26,7 @@ type ProgressCallback = (progress: PublishProgress) => void;
 type PublishResult = {
     shareId: string;
     shareUrl: string;
+    onlineShareUrl: string;
 };
 
 /**
@@ -69,6 +70,7 @@ const getMainFileName = (settings: SogSettings): string => {
  * @param sogSettings   - SOG export settings (from ExportPopup).
  * @param projectName   - User-provided project name.
  * @param projectDetail - User-provided project description.
+ * @param owner         - User-provided creator name.
  * @param onProgress    - Callback for phased progress updates.
  * @param cancelSignal - AbortSignal-like object; setting `aborted = true` cancels the
  *                       prepare phase. Upload/complete phases ignore it.
@@ -82,6 +84,7 @@ const uploadSogPackage = async (
     sogSettings: SogSettings,
     projectName: string,
     projectDetail: string,
+    owner: string,
     onProgress?: ProgressCallback,
     cancelSignal?: { aborted: boolean },
     retrySignal?: { fileName: string | null },
@@ -348,7 +351,7 @@ const uploadSogPackage = async (
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sceneUrl, projectName, projectDetail })
+            body: JSON.stringify({ sceneUrl, projectName, projectDetail, owner })
         });
 
         if (!response.ok) {
@@ -368,8 +371,9 @@ const uploadSogPackage = async (
 
     // Use shareUrl from backend response (no manual fallback)
     const shareUrl = apiResult?.shareUrl || '';
+    const onlineShareUrl = apiResult?.onlineShareUrl || '';
 
-    return { shareId, shareUrl };
+    return { shareId, shareUrl, onlineShareUrl };
 };
 
 export { uploadSogPackage };
