@@ -71,6 +71,7 @@ const getMainFileName = (settings: SogSettings): string => {
  * @param projectName   - User-provided project name.
  * @param projectDetail - User-provided project description.
  * @param owner         - User-provided creator name.
+ * @param vrUrl         - User-provided VR URL.
  * @param onProgress    - Callback for phased progress updates.
  * @param cancelSignal - AbortSignal-like object; setting `aborted = true` cancels the
  *                       prepare phase. Upload/complete phases ignore it.
@@ -85,6 +86,7 @@ const uploadSogPackage = async (
     projectName: string,
     projectDetail: string,
     owner: string,
+    vrUrl: string,
     onProgress?: ProgressCallback,
     cancelSignal?: { aborted: boolean },
     retrySignal?: { fileName: string | null },
@@ -351,7 +353,7 @@ const uploadSogPackage = async (
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sceneUrl, projectName, projectDetail, owner })
+            body: JSON.stringify({ sceneUrl, projectName, projectDetail, owner, vrUrl })
         });
 
         if (!response.ok) {

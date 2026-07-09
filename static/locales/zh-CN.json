@@ -268,6 +268,7 @@
     "popup.publish-sog.status-completing": "创建分享...",
     "popup.publish-sog.cancelled": "已取消",
     "popup.publish-sog.owner": "创建者",
+    "popup.publish-sog.vr-url": "全景地址",
     "popup.publish-sog.internal-link": "内网链接",
     "popup.publish-sog.external-link": "外网链接",
     "popup.publish-sog.no-external-link": "暂无",

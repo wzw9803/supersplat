@@ -28,6 +28,7 @@ class PublishSogDialog extends Container {
     private _contentInput: Container;
     private _nameInput: TextInput;
     private _ownerInput: TextInput;
+    private _vrUrlInput: TextInput;
     private _descInput: TextAreaInput;
     private _confirmButton: Button;
     private _cancelButton: Button;
@@ -123,6 +124,14 @@ class PublishSogDialog extends Container {
 
         this._contentInput.append(nameRow);
         this._contentInput.append(ownerRow);
+
+        const vrUrlRow = new Container({ class: 'row' });
+        const vrUrlLabel = new Label({ class: 'label', text: localize('popup.publish-sog.vr-url') });
+        this._vrUrlInput = new TextInput({ class: 'text-input' });
+        vrUrlRow.append(vrUrlLabel);
+        vrUrlRow.append(this._vrUrlInput);
+        this._contentInput.append(vrUrlRow);
+
         this._contentInput.append(descRow);
 
         // Scene dirty status indicator (read-only, reflects fast-path eligibility)
@@ -313,10 +322,13 @@ class PublishSogDialog extends Container {
 
         // ---- Form validation (name + owner required) ----
         const validateForm = () => {
-            this._confirmButton.disabled = !this._nameInput.value.trim() || !this._ownerInput.value.trim();
+            this._confirmButton.disabled = !this._nameInput.value.trim()
+                || !this._ownerInput.value.trim()
+                || !this._vrUrlInput.value.trim();
         };
         this._nameInput.on('change', validateForm);
         this._ownerInput.on('change', validateForm);
+        this._vrUrlInput.on('change', validateForm);
 
         // ---- Button handlers (registered once) ----
         // Each handler reads this._resolve / this._publishResult which are
@@ -359,6 +371,7 @@ class PublishSogDialog extends Container {
             // Reset UI
             this._nameInput.value = '';
             this._ownerInput.value = '';
+            this._vrUrlInput.value = '';
             this._descInput.value = '';
             this._confirmButton.disabled = true;
             this._linkInput.value = '';
@@ -435,7 +448,8 @@ class PublishSogDialog extends Container {
                 this._onConfirm = async () => {
                     const projectName = this._nameInput.value.trim();
                     const owner = this._ownerInput.value.trim();
-                    if (!projectName || !owner) {
+                    const vrUrl = this._vrUrlInput.value.trim();
+                    if (!projectName || !owner || !vrUrl) {
                         this._confirmButton.disabled = true;
                         return;
                     }
@@ -523,6 +537,7 @@ class PublishSogDialog extends Container {
                             projectName,
                             this._descInput.value.trim(),
                             owner,
+                            vrUrl,
                             onProgress,
                             this._cancelSignal,
                             this._retrySignal,
