@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SuperSplat Service Worker 深度分析报告</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-secondary: #8b949e;
+    --accent: #58a6ff;
+    --accent-subtle: #1f6feb33;
+    --green: #3fb950;
+    --green-subtle: #2ea04333;
+    --orange: #d2991d;
+    --orange-subtle: #9e6a0333;
+    --red: #f85149;
+    --red-subtle: #da363333;
+    --purple: #a371f7;
+    --purple-subtle: #8957e533;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 40px 20px;
+  }
+  .container { max-width: 980px; margin: 0 auto; }
+  h1 {
+    font-size: 2em;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .subtitle { color: var(--text-secondary); font-size: 0.95em; margin-bottom: 32px; }
+  h2 {
+    font-size: 1.4em;
+    margin: 40px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    color: #f0f6fc;
+  }
+  h3 { font-size: 1.1em; margin: 24px 0 10px; color: #e6edf3; }
+  p { margin-bottom: 12px; }
+
+  .summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  .card-label { color: var(--text-secondary); font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card-value { font-size: 1.1em; font-weight: 600; margin-top: 4px; }
+  .card-value.yes { color: var(--green); }
+  .card-value.no  { color: var(--red); }
+
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    overflow-x: auto;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.86em;
+    line-height: 1.5;
+    margin: 12px 0;
+  }
+  code { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; font-size: 0.9em; }
+  .inline-code {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 0.88em;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.92em;
+  }
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border: 1px solid var(--border);
+  }
+  th { background: var(--surface); font-weight: 600; color: #e6edf3; }
+  td { background: var(--bg); }
+  .tick { color: var(--green); font-weight: bold; }
+  .cross { color: var(--red); font-weight: bold; }
+
+  .flow {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin: 16px 0;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.84em;
+    line-height: 1.75;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin: 16px 0;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.82em;
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre;
+    color: var(--text-secondary);
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+  }
+  .badge-accent { background: var(--accent-subtle); color: var(--accent); }
+  .badge-green  { background: var(--green-subtle);  color: var(--green); }
+  .badge-orange { background: var(--orange-subtle); color: var(--orange); }
+  .badge-purple { background: var(--purple-subtle); color: var(--purple); }
+  .badge-red    { background: var(--red-subtle);    color: var(--red); }
+
+  ul, ol { padding-left: 24px; margin-bottom: 12px; }
+  li { margin-bottom: 4px; }
+
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  @media (max-width: 640px) { .compare-grid { grid-template-columns: 1fr; } }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+
+  .note {
+    background: var(--surface);
+    border-left: 4px solid var(--accent);
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 0.92em;
+  }
+  .note.orange { border-left-color: var(--orange); }
+  .note.green  { border-left-color: var(--green); }
+  .note.purple { border-left-color: var(--purple); }
+
+  .footnote { color: var(--text-secondary); font-size: 0.85em; margin-top: 40px; }
+
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 28px;
+    margin: 24px 0;
+  }
+  .toc ul { margin-bottom: 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>SuperSplat Service Worker 深度分析</h1>
+<p class="subtitle">基于源码 <code class="inline-code">src/sw.ts</code> / <code class="inline-code">src/main.ts</code> / <code class="inline-code">rollup.config.mjs</code> 的完整梳理 &nbsp;|&nbsp; 2026-07-09</p>
+
+<!-- ==================== TOC ==================== -->
+<div class="toc">
+<strong>📋 目录</strong>
+<ul>
+  <li><a href="#s1">一、概览</a></li>
+  <li><a href="#s2">二、为什么引入 Service Worker？</a></li>
+  <li><a href="#s3">三、哪些资源被代理（预缓存）</a></li>
+  <li><a href="#s4">四、版本化缓存实现</a></li>
+  <li><a href="#s5">五、三个生命周期事件</a></li>
+  <li><a href="#s6">六、SW 可以访问什么？（ServiceWorkerGlobalScope）</a></li>
+  <li><a href="#s7">七、多页面共享同一个 SW</a></li>
+  <li><a href="#s8">八、Scope 与请求拦截全流程</a></li>
+  <li><a href="#s9">九、浏览器 Worker 全家福</a></li>
+</ul>
+</div>
+
+<!-- ==================== 1 ==================== -->
+<h2 id="s1">一、概览</h2>
+
+<div class="summary-cards">
+  <div class="card">
+    <div class="card-label">目标场景</div>
+    <div class="card-value yes">Vortex 私有化部署</div>
+  </div>
+  <div class="card">
+    <div class="card-label">构建开关</div>
+    <div class="card-value">BUILD_SW=true</div>
+  </div>
+  <div class="card">
+    <div class="card-label">SW 框架</div>
+    <div class="card-value yes">手写 · 零依赖</div>
+  </div>
+  <div class="card">
+    <div class="card-label">缓存策略</div>
+    <div class="card-value">Cache-First</div>
+  </div>
+  <div class="card">
+    <div class="card-label">PWA</div>
+    <div class="card-value yes">可安装</div>
+  </div>
+  <div class="card">
+    <div class="card-label">普通构建</div>
+    <div class="card-value no">不包含 SW</div>
+  </div>
+</div>
+
+<p>Service Worker 是专为 <strong>Vortex 部署场景</strong>（<code class="inline-code">build:vortex</code>）设计的。普通 <code class="inline-code">npm run build</code> 和 <code class="inline-code">npm run develop</code> <strong>不包含</strong> SW —— 通过条件编译实现。</p>
+
+<!-- ==================== 2 ==================== -->
+<h2 id="s2">二、为什么引入 Service Worker？</h2>
+
+<div class="note">
+  <strong>核心诉求：离线可用 + 秒开体验。</strong>Vortex 是私有化部署场景，网络环境可能不稳定，SW 确保应用在弱网或断网时仍能正常打开。
+</div>
+
+<h3>2.1 三个核心考量</h3>
+
+<table>
+  <tr><th style="width:18%">考量</th><th>说明</th></tr>
+  <tr>
+    <td><strong>离线可用</strong></td>
+    <td>首次加载后核心资源写入 Cache Storage，断网时直接从缓存加载，应用照常运行</td>
+  </tr>
+  <tr>
+    <td><strong>秒开体验</strong></td>
+    <td>Cache-First 策略，后续访问零网络请求，比 HTTP 缓存更可控更激进</td>
+  </tr>
+  <tr>
+    <td><strong>PWA 能力</strong></td>
+    <td>配合 manifest.json 实现全屏安装、<code>.ply</code> 文件关联（双击 PLY 文件直接用 SuperSplat 打开）</td>
+  </tr>
+</table>
+
+<h3>2.2 设计决策</h3>
+
+<div class="note purple">
+  <strong>为什么手写而不是用 Workbox？</strong>
+  <ul>
+    <li>预缓存的资源列表是固定的、数量少（仅 19 个 URL），不需要 Workbox 的复杂路由和策略组合</li>
+    <li>零额外依赖，代码仅 ~60 行，完全可控</li>
+    <li>构建集成简单：Rollup 单独入口独立打包即可，无需额外插件</li>
+  </ul>
+</div>
+
+<div class="note orange">
+  <strong>为什么不用 skipWaiting + clientsClaim？</strong><br>
+  这个项目刻意采用了<strong>保守策略</strong>——新版本 SW 不会立即接管页面，等用户关闭所有旧 Tab 后才激活。这避免了运行时缓存被突然替换导致的资源版本不一致问题。代价是用户需要刷新页面才能用上新版本。
+</div>
+
+<h3>2.3 条件编译机制</h3>
+
+<pre>// rollup.config.mjs — 构建时替换
+const BUILD_SW = process.env.BUILD_SW === 'true';  // 读取环境变量
+
+replace({
+    'process.env.BUILD_SW': JSON.stringify(BUILD_SW),  // → "true" or "false"
+})
+
+// src/main.ts — 运行时注册
+if (process.env.BUILD_SW) {        // 构建后变成 if ("false") { ... }
+    navigator.serviceWorker.register('./sw.js')
+}</pre>
+
+<p>非 PWA 模式下，<code class="inline-code">if (false)</code> 被 terser 完全移除。同时 SW 入口仅当 <code class="inline-code">BUILD_SW=true</code> 时才加入 Rollup 构建配置，所以 <code class="inline-code">dist/sw.js</code> 根本不会生成。</p>
+
+<!-- ==================== 3 ==================== -->
+<h2 id="s3">三、哪些资源被代理（预缓存）</h2>
+
+<pre>// src/sw.ts — 完整的 cacheUrls 列表（19 个资源）
+const cacheUrls = [
+    './',                                      // 应用根路径
+    './index.css',                             // 样式
+    './index.html',                            // HTML 入口
+    './index.js',                              // 主 JS bundle
+    './index.js.map',                          // Source map
+    './manifest.json',                         // PWA 清单
+    './static/icons/logo-192.png',             // PWA 图标
+    './static/icons/logo-512.png',
+    './static/images/screenshot-narrow.jpg',   // PWA 截图
+    './static/images/screenshot-wide.jpg',
+    './static/lib/lodepng/lodepng.js',         // PNG 编解码
+    './static/lib/lodepng/lodepng.wasm',
+    './static/lib/webp/webp.mjs',              // WebP 编解码
+    './static/lib/webp/webp.wasm',
+    './static/locales/de.json',                // 国际化文件 ×6
+    './static/locales/en.json',
+    './static/locales/fr.json',
+    './static/locales/ja.json',
+    './static/locales/ko.json',
+    './static/locales/zh-CN.json'
+];</pre>
+
+<p><strong>不在列表中的：</strong>后端 API（<code class="inline-code">/api/scene-shares</code>）、CDN 上的 SOG 文件、其他第三方资源。这些请求 SW 仍会拦截（scope 内），但 Cache-First 未命中时透传到网络，<strong>不写回缓存</strong>。</p>
+
+<!-- ==================== 4 ==================== -->
+<h2 id="s4">四、版本化缓存实现</h2>
+
+<p>核心在 <code class="inline-code">src/sw.ts</code>，全链路如下：</p>
+
+<div class="flow">package.json: "version": "2.27.4"
+    │
+    ▼  Rollup json() 插件内联
+src/sw.ts → import { version } from '../package.json'
+    │         appVersion = "2.27.4"（硬编码进 SW 产物）
+    ▼
+cacheName = `superSplat-v${appVersion}`
+    │       = "superSplat-v2.27.4"
+    ▼
+┌─ install ─────────────────────────────────────┐
+│  caches.open("superSplat-v2.27.4")             │
+│    .then(cache => cache.addAll(cacheUrls))      │
+└────────────────────────────────────────────────┘
+    │
+    ▼
+┌─ activate ────────────────────────────────────┐
+│  caches.keys().then(names =>                   │
+│    names.filter(n => n ≠ "superSplat-v2.27.4") │
+│         .forEach(caches.delete)                │
+│  )                                             │
+└────────────────────────────────────────────────┘</div>
+
+<p>每次构建新版本部署后，SW 文件内容变化 → 浏览器触发新 install → 新 activate 时删除所有非当前版本的缓存桶，用户本地始终只保留一份缓存。</p>
+
+<!-- ==================== 5 ==================== -->
+<h2 id="s5">五、三个生命周期事件</h2>
+
+<table>
+  <tr><th style="width:10%">事件</th><th style="width:28%">触发时机</th><th style="width:62%">SuperSplat 中的行为</th></tr>
+  <tr>
+    <td><span class="badge badge-accent">install</span></td>
+    <td>首次注册 SW<br><strong>或</strong> SW 文件任何一个字节变化时</td>
+    <td>
+      <code>event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(cacheUrls)))</code><br>
+      — 一次性预缓存全部核心资源<br>
+      — 任一 URL 下载失败（如 404）→ 整个 install 失败 → 旧 SW 继续工作<br>
+      — <span class="cross">未调用</span> <code>self.skipWaiting()</code>
+    </td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-green">activate</span></td>
+    <td>install 成功 + <strong>所有旧 SW 页面关闭后</strong></td>
+    <td>
+      遍历 <code>caches.keys()</code>，删除非当前版本缓存桶<br>
+      — <span class="cross">未调用</span> <code>clientsClaim()</code>，旧页仍由旧 SW 控制直到刷新
+    </td>
+  </tr>
+  <tr>
+    <td><span class="badge badge-orange">fetch</span></td>
+    <td>SW 控制范围内的页面<strong>每次</strong>发起 HTTP 请求</td>
+    <td>
+      <code>event.respondWith(caches.match(request) ?? fetch(request))</code><br>
+      — Cache-First：命中 → 返回缓存；未命中 → 走网络<br>
+      — <strong>不写回缓存</strong>（非 cacheUrls 资源每次都走网络）
+    </td>
+  </tr>
+</table>
+
+<h3>版本更新流程</h3>
+
+<div class="flow">用户首次访问
+    │
+    ▼
+install → 预缓存所有核心资源
+    │
+    ▼
+activate → 清理旧版本缓存
+    │
+    ▼
+fetch → 之后每个请求先查缓存，未命中走网络
+
+══════════════ 某天发布新版本 ══════════════
+
+新 SW install 成功（浏览器检测到 sw.js 变化）
+    │
+    ▼
+等待所有旧 Tab 关闭（用户不感知，旧页面照常工作）
+    │
+    ▼
+旧 Tab 全部关闭 → activate → 删旧缓存桶 → 建新缓存桶
+    │
+    ▼
+用户下次打开 → 使用新版本</div>
+
+<!-- ==================== 6 ==================== -->
+<h2 id="s6">六、SW 可以访问什么？</h2>
+
+<p>SW 运行在 <code class="inline-code">ServiceWorkerGlobalScope</code> 中，<strong>完全独立于页面</strong>。代码中的类型声明：</p>
+
+<pre>declare let self: ServiceWorkerGlobalScope;</pre>
+
+<table>
+  <tr><th style="width:20%">类别</th><th style="width:38%"><span class="tick">✓</span> 可用</th><th style="width:42%"><span class="cross">✗</span> 不可用</th></tr>
+  <tr>
+    <td><strong>存储</strong></td>
+    <td><code>caches</code>、IndexedDB、<code>CacheStorage</code></td>
+    <td><code>localStorage</code>、<code>sessionStorage</code><br>（同步阻塞 API，SW 中直接禁用）</td>
+  </tr>
+  <tr>
+    <td><strong>网络</strong></td>
+    <td><code>fetch</code>、WebSocket</td>
+    <td>XHR 同步版</td>
+  </tr>
+  <tr>
+    <td><strong>生命周期</strong></td>
+    <td><code>install</code>、<code>activate</code>、<code>fetch</code>、<code>message</code> 事件</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td><strong>页面通信</strong></td>
+    <td><code>self.clients</code>（Clients API）<br>BroadcastChannel、MessageChannel</td>
+    <td><code>window.postMessage</code>（没有 window）</td>
+  </tr>
+  <tr>
+    <td><strong>推送 / 通知</strong></td>
+    <td>Push API、Notification API</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td><strong>后台任务</strong></td>
+    <td>Background Sync</td>
+    <td>—</td>
+  </tr>
+  <tr>
+    <td><strong>DOM</strong></td>
+    <td>—</td>
+    <td><code>document</code>、<code>window</code><br><strong>所有 DOM API 完全不可用</strong></td>
+  </tr>
+</table>
+
+<div class="note">
+  <strong>隐含前提：</strong>代码中直接写 <code>caches.open()</code>、<code>caches.keys()</code>、<code>caches.match()</code> 之所以能工作，是因为 <code>caches</code> 是 <code>ServiceWorkerGlobalScope</code> 的原生属性——就像页面里可以直接写 <code>window.localStorage</code> 一样，不需要 import。
+</div>
+
+<!-- ==================== 7 ==================== -->
+<h2 id="s7">七、多页面共享同一个 SW</h2>
+
+<div class="diagram">┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│   Tab A      │   │   Tab B      │   │   Tab C      │
+│   index.html │   │   viewer     │   │   editor     │
+└───────┬──────┘   └───────┬──────┘   └───────┬──────┘
+        │                  │                  │
+        │  每个 Tab 通过 navigator.serviceWorker
+        │  拿到独立的 ServiceWorkerContainer 引用
+        │  但都指向同一个 SW 注册实例
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           │
+                           ▼
+                 ┌─────────────────────┐
+                 │  Service Worker     │
+                 │  (sw.js) · 唯一实例  │
+                 │                     │
+                 │  cacheName =        │
+                 │  superSplat-v2.27.4 │
+                 └─────────────────────┘</div>
+
+<p><strong>四个关键结论：</strong></p>
+
+<ol>
+  <li><strong>SW 是跨页面的：</strong>同源下所有受控页面共享同一个 SW 实例。缓存（Cache Storage）自然也是共享的。</li>
+  <li><strong>SW 生命周期独立于页面：</strong>所有 Tab 关闭后 SW 仍可存活一段时间（浏览器空闲回收策略决定），下次打开页面时无需重新 install。</li>
+  <li><strong>更新只发生一次：</strong>当 SW 文件变化时，浏览器只做一次字节对比和 install，不会每个 Tab 各触发一次。</li>
+  <li><strong>self.clients 可以遍历所有受控页面：</strong>SW 知道自己管了多少个 Tab，可以通过 Clients API 与它们通信。</li>
+</ol>
+
+<!-- ==================== 8 ==================== -->
+<h2 id="s8">八、Scope 与请求拦截全流程</h2>
+
+<h3>8.1 Scope 控制范围</h3>
+
+<pre>navigator.serviceWorker.register('./sw.js');  // scope 默认 = sw.js 所在目录 = ./</pre>
+
+<table>
+  <tr><th style="width:42%">请求</th><th style="width:18%">是否拦截</th><th>原因</th></tr>
+  <tr><td><code>/index.html</code></td><td><span class="badge badge-green">受控</span></td><td>scope 内</td></tr>
+  <tr><td><code>/static/icons/logo.png</code></td><td><span class="badge badge-green">受控</span></td><td>scope 内</td></tr>
+  <tr><td><code>/static/locales/en.json</code></td><td><span class="badge badge-green">受控</span></td><td>scope 内</td></tr>
+  <tr><td><code>/subpage/index.html</code></td><td><span class="badge badge-green">受控</span></td><td>scope 内（根路径覆盖所有子目录）</td></tr>
+  <tr><td><code>https://api.example.com/data</code></td><td><span class="badge badge-red">不受控</span></td><td>跨域，不在 scope 下</td></tr>
+  <tr><td><code>https://cdn.example.com/splat.sog</code></td><td><span class="badge badge-red">不受控</span></td><td>跨域</td></tr>
+</table>
+
+<p>这也是为什么 <code class="inline-code">cacheUrls</code> 全是 <code class="inline-code">./</code> 开头的路径——只有这些在 scope 内，<code class="inline-code">fetch</code> 事件才能拦截到它们。</p>
+
+<h3>8.2 单次请求拦截流程</h3>
+
+<div class="diagram">Tab 请求 ./index.js
+        │
+        ▼
+浏览器：scope 匹配？ ──是──▶ SW 的 fetch 事件触发
+        │
+        ▼
+caches.match(request)
+        │
+   ┌─命中──┐                       ┌─未命中─┐
+   │       │                       │        │
+   ▼       │                       ▼        │
+返回缓存    │                  fetch(request) │
+(零网络)    │                       │        │
+           │                  ┌─成功─┘  └失败─┐
+           │                  │              │
+           │                  ▼              ▼
+           │             返回网络响应      错误页面
+           │             (不写回缓存)
+           │                  │
+           └──────────────────┘
+                    │
+                    ▼
+            response 返回给页面</div>
+
+<div class="note orange">
+  <strong>注意：</strong>第 58 行 <code>response ?? fetch(event.request)</code> —— 网络请求的结果<strong>不会</strong>被自动写回缓存。非 <code>cacheUrls</code> 里的资源每次都走网络，SW 仅充当透明代理。如果想运行时缓存新资源，需要自行调用 <code>cache.put(request, response.clone())</code>。
+</div>
+
+<!-- ==================== 9 ==================== -->
+<h2 id="s9">九、浏览器 Worker 全家福</h2>
+
+<h3>9.1 全部 Worker 类型</h3>
+
+<table>
+  <tr><th>Worker 类型</th><th>全局作用域</th><th>核心用途</th></tr>
+  <tr>
+    <td><span class="badge badge-accent">Service Worker</span></td>
+    <td><code>ServiceWorkerGlobalScope</code></td>
+    <td>网络代理、离线缓存、推送通知</td>
+  </tr>
+  <tr>
+    <td><strong>Dedicated Worker</strong></td>
+    <td><code>DedicatedWorkerGlobalScope</code></td>
+    <td><code>new Worker('a.js')</code>，一对一，仅创建者可见</td>
+  </tr>
+  <tr>
+    <td><strong>Shared Worker</strong></td>
+    <td><code>SharedWorkerGlobalScope</code></td>
+    <td>同源多页面共享一个实例</td>
+  </tr>
+  <tr>
+    <td>Audio Worklet</td>
+    <td><code>AudioWorkletGlobalScope</code></td>
+    <td>音频 DSP 实时处理</td>
+  </tr>
+  <tr>
+    <td>Paint Worklet</td>
+    <td><code>PaintWorkletGlobalScope</code></td>
+    <td>CSS Paint API，自定义绘制</td>
+  </tr>
+  <tr>
+    <td>Layout Worklet</td>
+    <td><code>LayoutWorkletGlobalScope</code></td>
+    <td>CSS Layout API（实验性）</td>
+  </tr>
+  <tr>
+    <td>Animation Worklet</td>
+    <td><code>AnimationWorkletGlobalScope</code></td>
+    <td>高性能动画（实验性）</td>
+  </tr>
+</table>
+
+<h3>9.2 SW vs Dedicated Worker（最常混淆）</h3>
+
+<div class="compare-grid">
+  <div>
+    <table>
+      <tr><th colspan="2" style="text-align:center">Service Worker</th></tr>
+      <tr><td>注册方式</td><td><code>navigator.serviceWorker.register()</code></td></tr>
+      <tr><td>生存周期</td><td><span class="tick">独立于页面</span></td></tr>
+      <tr><td>作用范围</td><td>Scope 下所有页面</td></tr>
+      <tr><td>网络拦截</td><td><span class="tick">✓</span> fetch 事件</td></tr>
+      <tr><td>DOM</td><td><span class="cross">✗</span></td></tr>
+      <tr><td>localStorage</td><td><span class="cross">✗</span></td></tr>
+      <tr><td>caches</td><td><span class="tick">✓</span></td></tr>
+      <tr><td>IndexedDB</td><td><span class="tick">✓</span></td></tr>
+      <tr><td>postMessage</td><td><span class="tick">✓</span></td></tr>
+    </table>
+  </div>
+  <div>
+    <table>
+      <tr><th colspan="2" style="text-align:center">Dedicated Worker</th></tr>
+      <tr><td>注册方式</td><td><code>new Worker('a.js')</code></td></tr>
+      <tr><td>生存周期</td><td><span class="cross">随创建页销毁</span></td></tr>
+      <tr><td>作用范围</td><td>仅创建它的页面</td></tr>
+      <tr><td>网络拦截</td><td><span class="cross">✗</span></td></tr>
+      <tr><td>DOM</td><td><span class="cross">✗</span></td></tr>
+      <tr><td>localStorage</td><td><span class="cross">✗</span></td></tr>
+      <tr><td>caches</td><td><span class="tick">✓</span></td></tr>
+      <tr><td>IndexedDB</td><td><span class="tick">✓</span></td></tr>
+      <tr><td>postMessage</td><td><span class="tick">✓</span></td></tr>
+    </table>
+  </div>
+</div>
+
+<h3>9.3 Shared Worker：特殊的中间态</h3>
+
+<p>跨页面共享同一个 Worker 实例（类似 SW），但<strong>不能</strong>拦截网络请求（没有 fetch 事件）。常用来共享 WebSocket 连接或跨 Tab 状态同步。</p>
+
+<pre>// page-a.html
+new SharedWorker('shared.js').port.postMessage('hello from A');
+
+// page-b.html — 拿到的是同一个 worker 实例！
+new SharedWorker('shared.js').port.onmessage = e => console.log(e.data);
+// → "hello from A"</pre>
+
+<div class="note purple">
+  <strong>回到你的代码：</strong><code>declare let self: ServiceWorkerGlobalScope</code> 这行告诉 TypeScript 当前文件的 <code>self</code> 是 SW 的全局作用域。如果写的是 Dedicated Worker，应该声明为 <code>DedicatedWorkerGlobalScope</code>。两者的 <code>self</code> 上 API 交集很大（都有 caches、fetch、postMessage），但 SW 独有的能力（skipWaiting、clientsClaim、event.waitUntil）在 Dedicated Worker 上不存在。
+</div>
+
+<hr>
+
+<p class="footnote">Generated from source analysis of SuperSplat. 关键源文件：<code>src/sw.ts</code> / <code>src/main.ts</code> / <code>rollup.config.mjs</code> / <code>src/manifest.json</code></p>
+
+</div>
+</body>
+</html>
